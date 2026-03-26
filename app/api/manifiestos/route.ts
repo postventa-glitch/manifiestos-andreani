@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pdf from 'pdf-parse';
 import { parsePdfText } from '@/lib/pdf-parser';
-import { addManifiesto, getAll } from '@/lib/store';
+import { addManifiesto, deleteManifiesto, getAll } from '@/lib/store';
 
 export async function GET() {
   const data = await getAll();
@@ -41,5 +41,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ results, ...storeData });
   } catch (error) {
     return NextResponse.json({ error: 'Error procesando PDFs' }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { manifiestoId } = await request.json();
+    if (!manifiestoId) {
+      return NextResponse.json({ error: 'manifiestoId requerido' }, { status: 400 });
+    }
+    const deleted = await deleteManifiesto(manifiestoId);
+    if (!deleted) {
+      return NextResponse.json({ error: 'Manifiesto no encontrado' }, { status: 404 });
+    }
+    const data = await getAll();
+    return NextResponse.json(data);
+  } catch {
+    return NextResponse.json({ error: 'Error eliminando manifiesto' }, { status: 500 });
   }
 }

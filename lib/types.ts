@@ -8,8 +8,9 @@ export interface Guia {
 export interface AuditEntry {
   guiaNumero: string;
   manifiestoId: string;
-  action: 'checked' | 'unchecked';
+  action: 'checked' | 'unchecked' | 'deleted';
   timestamp: string;
+  detail?: string;
 }
 
 export interface Manifiesto {

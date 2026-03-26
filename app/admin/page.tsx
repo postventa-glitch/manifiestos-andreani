@@ -23,6 +23,14 @@ interface Manifiesto {
   uploadedAt: string;
 }
 
+interface AuditEntry {
+  guiaNumero: string;
+  manifiestoId: string;
+  action: 'checked' | 'unchecked' | 'deleted';
+  timestamp: string;
+  detail?: string;
+}
+
 interface DayRecord {
   date: string;
   manifiestos: Manifiesto[];
@@ -31,13 +39,14 @@ interface DayRecord {
   completedGuias: number;
 }
 
-type Tab = 'upload' | 'dashboard' | 'tracking' | 'history';
+type Tab = 'upload' | 'dashboard' | 'tracking' | 'audit' | 'history';
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('upload');
   const [manifiestos, setManifiestos] = useState<Manifiesto[]>([]);
   const [pending, setPending] = useState<Manifiesto[]>([]);
   const [history, setHistory] = useState<DayRecord[]>([]);
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<any[]>([]);
 
@@ -51,6 +60,7 @@ export default function AdminPage() {
       const hData = await hRes.json();
       setManifiestos(mData.manifiestos || []);
       setPending(mData.pending || []);
+      setAuditLog(mData.auditLog || []);
       setHistory(hData.history || []);
     } catch {
       // silent on error
@@ -84,6 +94,25 @@ export default function AdminPage() {
     }
   };
 
+  const handleDelete = async (manifiestoId: string, numero: string) => {
+    if (!confirm(`Eliminar manifiesto ${numero}? Esta accion no se puede deshacer.`)) return;
+    try {
+      const res = await fetch('/api/manifiestos', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manifiestoId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setManifiestos(data.manifiestos || []);
+        setPending(data.pending || []);
+        setAuditLog(data.auditLog || []);
+      }
+    } catch {
+      // silent
+    }
+  };
+
   const handleFinalize = async () => {
     if (!confirm('Finalizar el dia? Las guias pendientes pasaran al dia siguiente.')) return;
     const res = await fetch('/api/finalize', { method: 'POST' });
@@ -98,6 +127,7 @@ export default function AdminPage() {
     { key: 'upload', label: 'Subir Manifiestos' },
     { key: 'dashboard', label: 'Dashboard' },
     { key: 'tracking', label: 'Tracking' },
+    { key: 'audit', label: 'Cambios' },
     { key: 'history', label: 'Historial' },
   ];
 
@@ -151,7 +181,9 @@ export default function AdminPage() {
             uploading={uploading}
             uploadResults={uploadResults}
             manifiestos={manifiestos}
+            pending={pending}
             onUpload={handleUpload}
+            onDelete={handleDelete}
           />
         )}
         {tab === 'dashboard' && (
@@ -163,6 +195,7 @@ export default function AdminPage() {
           />
         )}
         {tab === 'tracking' && <TrackingTab allManifiestos={allManifiestos} />}
+        {tab === 'audit' && <AuditTab auditLog={auditLog} allManifiestos={allManifiestos} />}
         {tab === 'history' && <HistoryTab history={history} />}
       </div>
     </div>
@@ -174,12 +207,16 @@ function UploadTab({
   uploading,
   uploadResults,
   manifiestos,
+  pending,
   onUpload,
+  onDelete,
 }: {
   uploading: boolean;
   uploadResults: any[];
   manifiestos: Manifiesto[];
+  pending: Manifiesto[];
   onUpload: (e: React.FormEvent<HTMLFormElement>) => void;
+  onDelete: (id: string, numero: string) => void;
 }) {
   return (
     <div className="space-y-6">
@@ -230,29 +267,32 @@ function UploadTab({
       </div>
 
       {/* Current manifests */}
-      {manifiestos.length > 0 && (
+      {(manifiestos.length > 0 || pending.length > 0) && (
         <div className="bg-white rounded-xl p-6 shadow-sm">
-          <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
-            Manifiestos cargados hoy ({manifiestos.length})
-          </h3>
-          <div className="space-y-3">
-            {manifiestos.map(m => (
-              <div key={m.id} className="flex items-center justify-between p-3 bg-[#f5f7fa] rounded-lg">
-                <div>
-                  <span className="font-mono text-sm font-semibold text-azul">N&ordm; {m.numero}</span>
-                  <span className="ml-3 text-xs text-gray-500">{m.sucursal}</span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="font-mono text-xs text-gray-500">
-                    {m.guias.filter(g => g.checked).length}/{m.guias.length} guias
-                  </span>
-                  <span className="font-mono text-[10px] text-gray-400">
-                    Subido: {new Date(m.uploadedAt).toLocaleTimeString('es-AR')}
-                  </span>
-                </div>
+          {pending.length > 0 && (
+            <>
+              <h3 className="font-mono text-sm font-semibold text-amber-700 mb-3 uppercase tracking-wider">
+                Pendientes del dia anterior ({pending.length})
+              </h3>
+              <div className="space-y-3 mb-5">
+                {pending.map(m => (
+                  <ManifiestoRow key={m.id} m={m} onDelete={onDelete} isPending />
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
+          {manifiestos.length > 0 && (
+            <>
+              <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
+                Manifiestos cargados hoy ({manifiestos.length})
+              </h3>
+              <div className="space-y-3">
+                {manifiestos.map(m => (
+                  <ManifiestoRow key={m.id} m={m} onDelete={onDelete} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -549,6 +589,143 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── MANIFIESTO ROW ─── */
+function ManifiestoRow({ m, onDelete, isPending }: { m: Manifiesto; onDelete: (id: string, numero: string) => void; isPending?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between p-3 rounded-lg ${isPending ? 'bg-amber-50 border border-amber-200' : 'bg-[#f5f7fa]'}`}>
+      <div>
+        <span className="font-mono text-sm font-semibold text-azul">N&ordm; {m.numero}</span>
+        <span className="ml-3 text-xs text-gray-500">{m.sucursal}</span>
+        {isPending && <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-mono">pendiente</span>}
+      </div>
+      <div className="flex items-center gap-4">
+        <span className="font-mono text-xs text-gray-500">
+          {m.guias.filter(g => g.checked).length}/{m.guias.length} guias
+        </span>
+        <span className="font-mono text-[10px] text-gray-400">
+          Subido: {new Date(m.uploadedAt).toLocaleTimeString('es-AR')}
+        </span>
+        <button
+          onClick={() => onDelete(m.id, m.numero)}
+          className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700 rounded-lg transition-colors font-mono text-xs font-bold"
+          title="Eliminar manifiesto"
+        >
+          X
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── AUDIT TAB ─── */
+function AuditTab({ auditLog, allManifiestos }: { auditLog: AuditEntry[]; allManifiestos: Manifiesto[] }) {
+  const [filterAction, setFilterAction] = useState<string>('all');
+  const [filterManifiesto, setFilterManifiesto] = useState<string>('all');
+
+  const filtered = auditLog.filter(e => {
+    if (filterAction !== 'all' && e.action !== filterAction) return false;
+    if (filterManifiesto !== 'all' && e.manifiestoId !== filterManifiesto) return false;
+    return true;
+  });
+
+  const sorted = [...filtered].reverse();
+
+  const actionColors: Record<string, string> = {
+    checked: 'bg-green-100 text-green-800',
+    unchecked: 'bg-red-100 text-red-800',
+    deleted: 'bg-gray-100 text-gray-800',
+  };
+
+  const actionLabels: Record<string, string> = {
+    checked: 'HECHO',
+    unchecked: 'DESHECHO',
+    deleted: 'ELIMINADO',
+  };
+
+  if (auditLog.length === 0) {
+    return (
+      <div className="bg-white rounded-xl p-12 shadow-sm text-center">
+        <div className="text-4xl mb-3">📝</div>
+        <p className="text-gray-500 font-mono text-sm">No hay cambios registrados aun</p>
+        <p className="text-gray-400 font-mono text-xs mt-1">Los cambios aparecen cuando se marcan/desmarcan guias o se eliminan manifiestos</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Filters */}
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <h2 className="font-mono text-lg font-semibold text-azul mb-4">Historial de Cambios</h2>
+        <div className="flex gap-4">
+          <div>
+            <label className="font-mono text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Accion</label>
+            <select
+              value={filterAction}
+              onChange={e => setFilterAction(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg font-mono text-xs focus:outline-none focus:border-acento"
+            >
+              <option value="all">Todas</option>
+              <option value="checked">Hecho</option>
+              <option value="unchecked">Deshecho</option>
+              <option value="deleted">Eliminado</option>
+            </select>
+          </div>
+          <div>
+            <label className="font-mono text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Manifiesto</label>
+            <select
+              value={filterManifiesto}
+              onChange={e => setFilterManifiesto(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg font-mono text-xs focus:outline-none focus:border-acento"
+            >
+              <option value="all">Todos</option>
+              {allManifiestos.map(m => (
+                <option key={m.id} value={m.id}>{m.numero}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <span className="font-mono text-xs text-gray-400">{sorted.length} registros</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-xl p-6 shadow-sm overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Hora</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Accion</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Guia</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Detalle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((entry, i) => (
+              <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-2.5 font-mono text-gray-500">
+                  {new Date(entry.timestamp).toLocaleString('es-AR', {
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    day: '2-digit', month: '2-digit',
+                  })}
+                </td>
+                <td className="py-2.5">
+                  <span className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] font-semibold ${actionColors[entry.action] || 'bg-gray-100'}`}>
+                    {actionLabels[entry.action] || entry.action}
+                  </span>
+                </td>
+                <td className="py-2.5 font-mono">{entry.guiaNumero === '-' ? '-' : entry.guiaNumero}</td>
+                <td className="py-2.5 font-mono text-gray-500">{entry.detail || entry.manifiestoId}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -39,6 +39,7 @@ export default function PublicPage() {
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeResult, setFinalizeResult] = useState<string | null>(null);
   const pendingChecks = useRef<Set<string>>(new Set());
+  const lastVersion = useRef<number>(0);
 
   const fetchData = useCallback(async () => {
     // Skip polling if there are pending check operations
@@ -46,9 +47,14 @@ export default function PublicPage() {
     try {
       const res = await fetch('/api/manifiestos');
       const data = await res.json();
-      setManifiestos(data.manifiestos || []);
-      setPending(data.pending || []);
-      setAuditLog(data.auditLog || []);
+      const serverVersion = data._version || 0;
+      // Only update if server has newer data
+      if (serverVersion >= lastVersion.current) {
+        setManifiestos(data.manifiestos || []);
+        setPending(data.pending || []);
+        setAuditLog(data.auditLog || []);
+        lastVersion.current = serverVersion;
+      }
     } catch {
       // silent
     } finally {
@@ -97,10 +103,12 @@ export default function PublicPage() {
         body: JSON.stringify({ manifiestoId, guiaNumero, checked }),
       });
       const data = await res.json();
-      // Sync with server state
+      const serverVersion = data._version || 0;
+      // Always sync after our own write
       setManifiestos(data.manifiestos || []);
       setPending(data.pending || []);
       setAuditLog(data.auditLog || []);
+      lastVersion.current = serverVersion;
     } finally {
       pendingChecks.current.delete(key);
     }

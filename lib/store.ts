@@ -79,12 +79,14 @@ export async function getAll(): Promise<{
   manifiestos: Manifiesto[];
   pending: Manifiesto[];
   auditLog: AuditEntry[];
+  _version: number;
 }> {
   const store = await loadStore();
   return {
     manifiestos: store.manifiestos,
     pending: store.pendingFromYesterday,
     auditLog: store.auditLog,
+    _version: store._version,
   };
 }
 
@@ -95,6 +97,29 @@ export async function addManifiesto(m: Manifiesto): Promise<void> {
     store.manifiestos.push(m);
     await saveStore(store);
   }
+}
+
+export async function deleteManifiesto(manifiestoId: string): Promise<boolean> {
+  const store = await loadStore();
+  const inCurrent = store.manifiestos.find(m => m.id === manifiestoId);
+  const inPending = store.pendingFromYesterday.find(m => m.id === manifiestoId);
+  const found = inCurrent || inPending;
+
+  if (!found) return false;
+
+  store.manifiestos = store.manifiestos.filter(m => m.id !== manifiestoId);
+  store.pendingFromYesterday = store.pendingFromYesterday.filter(m => m.id !== manifiestoId);
+
+  store.auditLog.push({
+    guiaNumero: '-',
+    manifiestoId,
+    action: 'deleted',
+    timestamp: new Date().toISOString(),
+    detail: `Manifiesto ${found.numero} eliminado (${found.guias.length} guias)`,
+  });
+
+  await saveStore(store);
+  return true;
 }
 
 export async function updateGuiaCheck(
