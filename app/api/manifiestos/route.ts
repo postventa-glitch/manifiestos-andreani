@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pdf from 'pdf-parse';
 import { parsePdfText } from '@/lib/pdf-parser';
-import { addManifiesto, getManifiestos, getPendingFromYesterday } from '@/lib/store';
+import { addManifiesto, getAll } from '@/lib/store';
 
 export async function GET() {
-  const manifiestos = await getManifiestos();
-  const pending = await getPendingFromYesterday();
-  return NextResponse.json({ manifiestos, pending });
+  const data = await getAll();
+  return NextResponse.json(data);
 }
 
 export async function POST(request: NextRequest) {
@@ -38,8 +37,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const manifiestos = await getManifiestos();
-    return NextResponse.json({ results, manifiestos });
+    const storeData = await getAll();
+    return NextResponse.json({ results, ...storeData });
   } catch (error) {
     return NextResponse.json({ error: 'Error procesando PDFs' }, { status: 500 });
   }

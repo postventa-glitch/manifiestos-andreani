@@ -5,6 +5,13 @@ export interface Guia {
   checkedAt: string | null;
 }
 
+export interface AuditEntry {
+  guiaNumero: string;
+  manifiestoId: string;
+  action: 'checked' | 'unchecked';
+  timestamp: string;
+}
+
 export interface Manifiesto {
   id: string;
   numero: string;
@@ -25,6 +32,7 @@ export interface DayRecord {
   finalizedAt: string;
   totalGuias: number;
   completedGuias: number;
+  auditLog: AuditEntry[];
 }
 
 export interface TrackingEvent {

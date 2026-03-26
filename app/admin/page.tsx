@@ -42,15 +42,19 @@ export default function AdminPage() {
   const [uploadResults, setUploadResults] = useState<any[]>([]);
 
   const fetchData = useCallback(async () => {
-    const [mRes, hRes] = await Promise.all([
-      fetch('/api/manifiestos'),
-      fetch('/api/finalize'),
-    ]);
-    const mData = await mRes.json();
-    const hData = await hRes.json();
-    setManifiestos(mData.manifiestos || []);
-    setPending(mData.pending || []);
-    setHistory(hData.history || []);
+    try {
+      const [mRes, hRes] = await Promise.all([
+        fetch('/api/manifiestos'),
+        fetch('/api/finalize'),
+      ]);
+      const mData = await mRes.json();
+      const hData = await hRes.json();
+      setManifiestos(mData.manifiestos || []);
+      setPending(mData.pending || []);
+      setHistory(hData.history || []);
+    } catch {
+      // silent on error
+    }
   }, []);
 
   useEffect(() => {
