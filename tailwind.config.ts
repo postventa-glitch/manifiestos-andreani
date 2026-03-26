@@ -1,11 +1,16 @@
-import type { Config } from 'tailwindcss'
+import type { Config } from 'tailwindcss';
 
 const config: Config = {
-  content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
+  content: [
+    './components/**/*.{js,ts,jsx,tsx}',
+    './app/**/*.{js,ts,jsx,tsx}',
+  ],
   theme: {
     extend: {
       colors: {
-        azul: { DEFAULT: '#1a2e5a', medio: '#2a4a8a', claro: '#dce8f7' },
+        azul: '#1a2e5a',
+        'azul-medio': '#2a4a8a',
+        'azul-claro': '#dce8f7',
         acento: '#0057d9',
         verde: '#0f9d58',
         rojo: '#d93025',
@@ -17,5 +22,6 @@ const config: Config = {
     },
   },
   plugins: [],
-}
-export default config
+};
+
+export default config;
