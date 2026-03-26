@@ -27,7 +27,7 @@ function extractGuias(text: string): Guia[] {
   const guias: Guia[] = [];
   const seen = new Set<string>();
 
-  // Primary: number + 15-digit guide starting with 3600 + packages
+  // Pattern 1: with spaces — "01 360002929430380 1"
   const regex1 = /(\d{1,2})\s+(3600\d{11})\s+(\d+)/g;
   let m;
   while ((m = regex1.exec(text)) !== null) {
@@ -39,19 +39,20 @@ function extractGuias(text: string): Guia[] {
 
   if (guias.length > 0) return guias;
 
-  // Fallback 1: any 15-digit number starting with 360 followed by package count
-  const regex2 = /(360\d{12})\s+(\d+)/g;
+  // Pattern 2: NO spaces (pdf-parse concatenates columns) — "013600029294303801"
+  // Format: 1-2 digit row number + 15-digit guide (3600...) + 1+ digit package count
+  const regex2 = /(\d{1,2})(3600\d{11})(\d{1,3})/g;
   while ((m = regex2.exec(text)) !== null) {
-    if (!seen.has(m[1])) {
-      seen.add(m[1]);
-      guias.push({ numero: m[1], paquetes: parseInt(m[2]), checked: false, checkedAt: null });
+    if (!seen.has(m[2])) {
+      seen.add(m[2]);
+      guias.push({ numero: m[2], paquetes: parseInt(m[3]), checked: false, checkedAt: null });
     }
   }
 
   if (guias.length > 0) return guias;
 
-  // Fallback 2: just find all 15-digit numbers starting with 360
-  const regex3 = /\b(360\d{12})\b/g;
+  // Pattern 3: just find all 15-digit numbers starting with 3600
+  const regex3 = /(3600\d{11})/g;
   while ((m = regex3.exec(text)) !== null) {
     if (!seen.has(m[1])) {
       seen.add(m[1]);

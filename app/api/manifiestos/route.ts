@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
           success: false,
           file: file.name,
           error: 'No se pudo parsear el PDF',
-          debug: data.text.substring(0, 500),
+          debug: data.text.substring(0, 2000),
         });
       }
     }
