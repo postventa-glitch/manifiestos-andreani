@@ -4,8 +4,8 @@ import { parsePdfText } from '@/lib/pdf-parser';
 import { addManifiesto, getManifiestos, getPendingFromYesterday } from '@/lib/store';
 
 export async function GET() {
-  const manifiestos = getManifiestos();
-  const pending = getPendingFromYesterday();
+  const manifiestos = await getManifiestos();
+  const pending = await getPendingFromYesterday();
   return NextResponse.json({ manifiestos, pending });
 }
 
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       const manifiesto = parsePdfText(data.text);
 
       if (manifiesto) {
-        addManifiesto(manifiesto);
+        await addManifiesto(manifiesto);
         results.push({ success: true, numero: manifiesto.numero, guias: manifiesto.guias.length });
       } else {
         results.push({
@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ results, manifiestos: getManifiestos() });
+    const manifiestos = await getManifiestos();
+    return NextResponse.json({ results, manifiestos });
   } catch (error) {
     return NextResponse.json({ error: 'Error procesando PDFs' }, { status: 500 });
   }

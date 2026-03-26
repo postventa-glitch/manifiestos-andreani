@@ -1,46 +1,85 @@
+import { put, list, del } from '@vercel/blob';
 import { Manifiesto, DayRecord } from './types';
 
-// In-memory store — persists across requests within the same serverless instance.
-// For production persistence, swap with Vercel KV or a database.
+const STORE_KEY = 'manifiestos-data.json';
 
-declare global {
-  var __store: {
-    manifiestos: Manifiesto[];
-    history: DayRecord[];
-    pendingFromYesterday: Manifiesto[];
-  } | undefined;
+interface StoreData {
+  manifiestos: Manifiesto[];
+  history: DayRecord[];
+  pendingFromYesterday: Manifiesto[];
 }
 
-function getStore() {
-  if (!global.__store) {
-    global.__store = {
-      manifiestos: [],
-      history: [],
-      pendingFromYesterday: [],
-    };
+const emptyStore: StoreData = {
+  manifiestos: [],
+  history: [],
+  pendingFromYesterday: [],
+};
+
+async function findBlobUrl(): Promise<string | null> {
+  try {
+    const { blobs } = await list({ prefix: STORE_KEY });
+    if (blobs.length > 0) return blobs[0].url;
+    return null;
+  } catch {
+    return null;
   }
-  return global.__store;
 }
 
-export function getManifiestos(): Manifiesto[] {
-  return getStore().manifiestos;
+async function loadStore(): Promise<StoreData> {
+  try {
+    const url = await findBlobUrl();
+    if (!url) return { ...emptyStore };
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return { ...emptyStore };
+    const data = await res.json();
+    return data as StoreData;
+  } catch {
+    return { ...emptyStore };
+  }
 }
 
-export function getPendingFromYesterday(): Manifiesto[] {
-  return getStore().pendingFromYesterday;
+async function saveStore(data: StoreData): Promise<void> {
+  try {
+    // Delete old blob if exists
+    const url = await findBlobUrl();
+    if (url) {
+      await del(url);
+    }
+    // Save new blob
+    await put(STORE_KEY, JSON.stringify(data), {
+      access: 'public',
+      addRandomSuffix: false,
+    });
+  } catch (e) {
+    console.error('Failed to save store:', e);
+  }
 }
 
-export function addManifiesto(m: Manifiesto) {
-  const store = getStore();
-  // Avoid duplicates by manifest number
+export async function getManifiestos(): Promise<Manifiesto[]> {
+  const store = await loadStore();
+  return store.manifiestos;
+}
+
+export async function getPendingFromYesterday(): Promise<Manifiesto[]> {
+  const store = await loadStore();
+  return store.pendingFromYesterday;
+}
+
+export async function addManifiesto(m: Manifiesto): Promise<void> {
+  const store = await loadStore();
   const exists = store.manifiestos.find(x => x.numero === m.numero);
   if (!exists) {
     store.manifiestos.push(m);
+    await saveStore(store);
   }
 }
 
-export function updateGuiaCheck(manifiestoId: string, guiaNumero: string, checked: boolean) {
-  const store = getStore();
+export async function updateGuiaCheck(
+  manifiestoId: string,
+  guiaNumero: string,
+  checked: boolean
+): Promise<void> {
+  const store = await loadStore();
   const allManifiestos = [...store.manifiestos, ...store.pendingFromYesterday];
   const manifiesto = allManifiestos.find(m => m.id === manifiestoId);
   if (manifiesto) {
@@ -49,20 +88,24 @@ export function updateGuiaCheck(manifiestoId: string, guiaNumero: string, checke
       guia.checked = checked;
       guia.checkedAt = checked ? new Date().toISOString() : null;
     }
+    await saveStore(store);
   }
 }
 
-export function finalizeDay(): DayRecord | null {
-  const store = getStore();
+export async function finalizeDay(): Promise<DayRecord | null> {
+  const store = await loadStore();
   if (store.manifiestos.length === 0) return null;
 
   const today = new Date().toLocaleDateString('es-AR', {
-    day: '2-digit', month: '2-digit', year: 'numeric'
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
   });
 
   const totalGuias = store.manifiestos.reduce((sum, m) => sum + m.guias.length, 0);
   const completedGuias = store.manifiestos.reduce(
-    (sum, m) => sum + m.guias.filter(g => g.checked).length, 0
+    (sum, m) => sum + m.guias.filter(g => g.checked).length,
+    0
   );
 
   const record: DayRecord = {
@@ -92,15 +135,17 @@ export function finalizeDay(): DayRecord | null {
   store.pendingFromYesterday = pendingManifiestos;
   store.manifiestos = [];
 
+  await saveStore(store);
   return record;
 }
 
-export function getHistory(): DayRecord[] {
-  return getStore().history;
+export async function getHistory(): Promise<DayRecord[]> {
+  const store = await loadStore();
+  return store.history;
 }
 
-export function getAllGuiasFlat() {
-  const store = getStore();
+export async function getAllGuiasFlat() {
+  const store = await loadStore();
   const all = [...store.manifiestos, ...store.pendingFromYesterday];
   return all.flatMap(m =>
     m.guias.map(g => ({

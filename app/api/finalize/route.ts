@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server';
 import { finalizeDay, getHistory } from '@/lib/store';
 
 export async function POST() {
-  const record = finalizeDay();
+  const record = await finalizeDay();
   if (!record) {
     return NextResponse.json({ error: 'No hay manifiestos para finalizar' }, { status: 400 });
   }
-  return NextResponse.json({ record, history: getHistory() });
+  const history = await getHistory();
+  return NextResponse.json({ record, history });
 }
 
 export async function GET() {
-  return NextResponse.json({ history: getHistory() });
+  const history = await getHistory();
+  return NextResponse.json({ history });
 }

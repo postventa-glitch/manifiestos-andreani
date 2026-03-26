@@ -3,9 +3,8 @@ import { updateGuiaCheck, getManifiestos, getPendingFromYesterday } from '@/lib/
 
 export async function POST(request: NextRequest) {
   const { manifiestoId, guiaNumero, checked } = await request.json();
-  updateGuiaCheck(manifiestoId, guiaNumero, checked);
-  return NextResponse.json({
-    manifiestos: getManifiestos(),
-    pending: getPendingFromYesterday(),
-  });
+  await updateGuiaCheck(manifiestoId, guiaNumero, checked);
+  const manifiestos = await getManifiestos();
+  const pending = await getPendingFromYesterday();
+  return NextResponse.json({ manifiestos, pending });
 }
