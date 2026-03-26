@@ -213,6 +213,12 @@ function UploadTab({
                 {r.success
                   ? `Manifiesto ${r.numero} — ${r.guias} guias cargadas`
                   : `Error: ${r.error} ${r.file ? `(${r.file})` : ''}`}
+                {!r.success && r.debug && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs opacity-70">Ver texto raw del PDF (debug)</summary>
+                    <pre className="mt-1 text-[10px] bg-red-100 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap">{r.debug}</pre>
+                  </details>
+                )}
               </div>
             ))}
           </div>

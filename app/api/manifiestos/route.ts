@@ -29,7 +29,12 @@ export async function POST(request: NextRequest) {
         addManifiesto(manifiesto);
         results.push({ success: true, numero: manifiesto.numero, guias: manifiesto.guias.length });
       } else {
-        results.push({ success: false, file: file.name, error: 'No se pudo parsear el PDF' });
+        results.push({
+          success: false,
+          file: file.name,
+          error: 'No se pudo parsear el PDF',
+          debug: data.text.substring(0, 500),
+        });
       }
     }
 
