@@ -420,139 +420,91 @@ function KpiCard({ label, value, color }: { label: string; value: string; color?
 
 /* ─── TRACKING TAB ─── */
 function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
-  const [guia, setGuia] = useState('');
-  const [tracking, setTracking] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+  const [selectedGuia, setSelectedGuia] = useState('');
+  const [customGuia, setCustomGuia] = useState('');
 
   const allGuias = allManifiestos.flatMap(m =>
     m.guias.map(g => ({ ...g, manifiestoNumero: m.numero, manifiestoId: m.id, uploadedAt: m.uploadedAt }))
   );
 
-  const handleTrack = async (guiaNum: string) => {
-    setLoading(true);
-    setGuia(guiaNum);
-    try {
-      const res = await fetch(`/api/tracking?guia=${guiaNum}`);
-      const data = await res.json();
-      setTracking(data);
-    } catch {
-      setTracking({ error: 'Error consultando tracking' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const trackingUrl = selectedGuia
+    ? `https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`
+    : '';
 
   return (
     <div className="space-y-6">
       {/* Search */}
       <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h2 className="font-mono text-lg font-semibold text-azul mb-4">Consultar Tracking</h2>
+        <h2 className="font-mono text-lg font-semibold text-azul mb-4">Consultar Tracking Andreani</h2>
         <div className="flex gap-3">
           <input
             type="text"
-            value={guia}
-            onChange={e => setGuia(e.target.value)}
+            value={customGuia}
+            onChange={e => setCustomGuia(e.target.value)}
             placeholder="Numero de guia..."
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg font-mono text-sm focus:outline-none focus:border-acento"
+            onKeyDown={e => e.key === 'Enter' && customGuia && setSelectedGuia(customGuia)}
           />
           <button
-            onClick={() => handleTrack(guia)}
-            disabled={!guia || loading}
+            onClick={() => setSelectedGuia(customGuia)}
+            disabled={!customGuia}
             className="px-6 py-2.5 bg-acento text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
-            {loading ? 'Consultando...' : 'Buscar'}
+            Buscar
           </button>
         </div>
       </div>
 
       {/* Quick links for all guides */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
-          Guias cargadas — Click para consultar
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {allGuias.map(g => (
-            <button
-              key={g.numero}
-              onClick={() => handleTrack(g.numero)}
-              className={`px-3 py-1.5 font-mono text-xs rounded-lg border transition-colors ${
-                g.checked
-                  ? 'bg-green-50 border-green-200 text-green-700'
-                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-acento hover:text-acento'
-              }`}
-            >
-              {g.numero}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Tracking result */}
-      {tracking && (
+      {allGuias.length > 0 && (
         <div className="bg-white rounded-xl p-6 shadow-sm">
           <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
-            Resultado para {tracking.guia}
+            Guias cargadas — Click para consultar
           </h3>
-          {tracking.source === 'api' && tracking.tracking ? (
-            <div className="space-y-2">
-              {Array.isArray(tracking.tracking) ? (
-                tracking.tracking.map((t: any, i: number) => (
-                  <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
-                    <div className="w-2 h-2 rounded-full bg-acento mt-1.5 shrink-0" />
-                    <div>
-                      <div className="font-mono text-xs font-semibold">{t.Estado || t.estado || 'Movimiento'}</div>
-                      <div className="text-xs text-gray-500">{t.Fecha || t.fecha || ''}</div>
-                      <div className="text-xs text-gray-400">{t.Motivo || t.detalle || t.Sucursal || ''}</div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <pre className="text-xs font-mono bg-gray-50 p-4 rounded-lg overflow-auto">
-                  {JSON.stringify(tracking.tracking, null, 2)}
-                </pre>
-              )}
-            </div>
-          ) : (
-            <div className="text-center py-6">
-              <p className="text-sm text-gray-500 mb-3">No se pudo obtener tracking via API.</p>
-              <a
-                href={tracking.trackingUrl || `https://www.andreani.com/envio/${tracking.guia}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block px-6 py-2.5 bg-acento text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+          <div className="flex flex-wrap gap-2">
+            {allGuias.map(g => (
+              <button
+                key={g.numero}
+                onClick={() => { setSelectedGuia(g.numero); setCustomGuia(g.numero); }}
+                className={`px-3 py-1.5 font-mono text-xs rounded-lg border transition-colors ${
+                  selectedGuia === g.numero
+                    ? 'bg-acento border-acento text-white'
+                    : g.checked
+                    ? 'bg-green-50 border-green-200 text-green-700'
+                    : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-acento hover:text-acento'
+                }`}
               >
-                Ver en Andreani.com &rarr;
-              </a>
-            </div>
-          )}
+                {g.numero}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
+      {/* Tracking result */}
+      {selectedGuia && (
+        <div className="bg-white rounded-xl p-6 shadow-sm">
           {/* Internal flow */}
-          {allGuias.find(g => g.numero === tracking.guia) && (
-            <div className="mt-6 border-t pt-4">
+          {allGuias.find(g => g.numero === selectedGuia) && (
+            <div className="mb-6">
               <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">
-                Flujo interno
+                Flujo interno — {selectedGuia}
               </h4>
               {(() => {
-                const g = allGuias.find(x => x.numero === tracking.guia)!;
+                const g = allGuias.find(x => x.numero === selectedGuia)!;
                 const steps = [
-                  {
-                    label: 'Carga de manifiesto',
-                    time: new Date(g.uploadedAt).toLocaleString('es-AR'),
-                    done: true,
-                  },
-                  {
-                    label: 'Checklist (empaquetado)',
-                    time: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente',
-                    done: g.checked,
-                  },
+                  { label: 'Carga de manifiesto', time: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true },
+                  { label: 'Checklist (empaquetado)', time: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked },
                 ];
                 return (
-                  <div className="space-y-2">
+                  <div className="flex gap-4 mb-4">
                     {steps.map((s, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <div className={`w-3 h-3 rounded-full ${s.done ? 'bg-verde' : 'bg-gray-300'}`} />
-                        <span className="font-mono text-xs font-semibold w-40">{s.label}</span>
-                        <span className="font-mono text-xs text-gray-500">{s.time}</span>
+                      <div key={i} className={`flex-1 p-3 rounded-lg border ${s.done ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className={`w-2.5 h-2.5 rounded-full ${s.done ? 'bg-verde' : 'bg-gray-300'}`} />
+                          <span className="font-mono text-xs font-semibold">{s.label}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-gray-500">{s.time}</span>
                       </div>
                     ))}
                   </div>
@@ -560,6 +512,37 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
               })()}
             </div>
           )}
+
+          {/* External tracking link + iframe */}
+          <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">
+            Tracking Andreani
+          </h4>
+          <div className="flex gap-2 mb-4">
+            <a
+              href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Abrir en Andreani.com &rarr;
+            </a>
+            <a
+              href={`https://www.andreani.com/envio/${selectedGuia}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              Link alternativo &rarr;
+            </a>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: '500px' }}>
+            <iframe
+              src={trackingUrl}
+              className="w-full h-full"
+              sandbox="allow-scripts allow-same-origin allow-popups"
+              title={`Tracking ${selectedGuia}`}
+            />
+          </div>
         </div>
       )}
     </div>
