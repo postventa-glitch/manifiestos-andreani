@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
+
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+/* Custom checkbox */
+input[type="checkbox"].guia-check {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #c8d6e8;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.18s;
+  position: relative;
+  flex-shrink: 0;
+}
+
+input[type="checkbox"].guia-check:checked {
+  background: #0f9d58;
+  border-color: #0f9d58;
+}
+
+input[type="checkbox"].guia-check:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 8px;
+  height: 13px;
+  border: 2px solid white;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
+input[type="checkbox"].guia-check:hover:not(:checked) {
+  border-color: #0057d9;
+}
+
+@media print {
+  body { background: white !important; padding: 0 !important; }
+  .no-print { display: none !important; }
+}

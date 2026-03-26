@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+model Dia {
+  id           String       @id @default(cuid())
+  fecha        DateTime     @default(now())
+  finalizado   Boolean      @default(false)
+  finalizadoAt DateTime?
+  createdAt    DateTime     @default(now())
+  manifiestos  Manifiesto[]
+
+  @@index([finalizado])
+  @@index([fecha])
+}
+
+model Manifiesto {
+  id            String   @id @default(cuid())
+  numero        String   @unique
+  fecha         DateTime
+  sucursal      String
+  direccion     String
+  email         String
+  telefono      String
+  pesoTotal     Float
+  totalPaquetes Int
+  subidoAt      DateTime @default(now())
+  pdfFileName   String   @default("")
+  diaId         String
+  dia           Dia      @relation(fields: [diaId], references: [id])
+  guias         Guia[]
+
+  @@index([diaId])
+}
+
+model Guia {
+  id                String    @id @default(cuid())
+  numero            String
+  orden             Int
+  paquetes          Int
+  checked           Boolean   @default(false)
+  checkedAt         DateTime?
+  carryOver         Boolean   @default(false)
+  manifiestoId      String
+  manifiesto        Manifiesto @relation(fields: [manifiestoId], references: [id], onDelete: Cascade)
+  trackingData      Json?
+  trackingUpdatedAt DateTime?
+
+  @@index([manifiestoId])
+  @@index([numero])
+  @@index([checked])
+}
