@@ -2,16 +2,15 @@ import { getAll } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+export const maxDuration = 60;
 
-export async function GET(request: Request) {
+export async function GET() {
   const encoder = new TextEncoder();
-
   let lastVersion = -1;
   let closed = false;
 
   const stream = new ReadableStream({
     async start(controller) {
-      // Send initial connection event
       controller.enqueue(encoder.encode(': connected\n\n'));
 
       const poll = async () => {
@@ -25,25 +24,33 @@ export async function GET(request: Request) {
             const isInitial = lastVersion === -1;
             lastVersion = currentVersion;
 
-            const event = {
-              manifiestos: data.manifiestos,
-              pending: data.pending,
-              auditLog: data.auditLog,
-              _version: currentVersion,
-            };
-
-            const eventType = isInitial ? 'init' : 'update';
-            const msg = `id: ${currentVersion}\nevent: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`;
+            const msg = `id: ${currentVersion}\nevent: ${isInitial ? 'init' : 'update'}\ndata: ${JSON.stringify(data)}\n\n`;
             controller.enqueue(encoder.encode(msg));
+
+            // ── Recursive AI loop: push analytics alongside state ──
+            // On every state change, compute fresh predictions and push them
+            if (!isInitial) {
+              try {
+                const analyticsRes = await fetch(
+                  `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000'}/api/analytics`,
+                  { cache: 'no-store' }
+                );
+                if (analyticsRes.ok) {
+                  const analytics = await analyticsRes.json();
+                  const analyticsMsg = `event: analytics\ndata: ${JSON.stringify(analytics)}\n\n`;
+                  controller.enqueue(encoder.encode(analyticsMsg));
+                }
+              } catch {
+                // analytics push is best-effort
+              }
+            }
           } else {
-            // Heartbeat to keep connection alive
-            controller.enqueue(encoder.encode(': heartbeat\n\n'));
+            controller.enqueue(encoder.encode(': hb\n\n'));
           }
-        } catch (e) {
-          controller.enqueue(encoder.encode(': error\n\n'));
+        } catch {
+          controller.enqueue(encoder.encode(': err\n\n'));
         }
 
-        // Schedule next poll (1.5 seconds for near-real-time)
         if (!closed) {
           await new Promise(resolve => setTimeout(resolve, 1500));
           await poll();

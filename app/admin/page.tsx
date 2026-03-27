@@ -75,8 +75,11 @@ export default function AdminPage() {
           if (change.type === 'guia_checked') toast.success(change.detail, { duration: 2000 });
           else if (change.type === 'guia_unchecked') toast.warning(change.detail, { duration: 2000 });
         }
-        if (changes.length > 0) fetchAnalytics();
       }
+    },
+    // Recursive AI: analytics arrive via SSE stream, no manual refetch needed
+    onAnalytics: (data) => {
+      setAnalytics(data);
     },
   });
 
@@ -437,11 +440,8 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
     m.guias.map(g => ({ ...g, manifiestoNumero: m.numero, manifiestoId: m.id, uploadedAt: m.uploadedAt }))
   );
 
-  // Group guias by manifest
   const groupedByManifest = allManifiestos.map(m => ({
-    numero: m.numero,
-    fecha: m.fecha,
-    guias: m.guias,
+    numero: m.numero, fecha: m.fecha, guias: m.guias,
   }));
 
   const doTrack = async (guia: string) => {
@@ -453,7 +453,7 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
       const data = await res.json();
       setTrackingData(data);
     } catch {
-      setTrackingData({ error: 'Error de conexion' });
+      setTrackingData({ error: true });
     } finally {
       setLoadingTrack(false);
     }
@@ -466,19 +466,12 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
       {/* Search */}
       <div className="card">
         <div className="flex gap-2">
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
+          <input type="text" value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Numero de guia..."
             className="flex-1 px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded-lg mono text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
-            onKeyDown={e => e.key === 'Enter' && query && doTrack(query)}
-          />
-          <button
-            onClick={() => query && doTrack(query)}
-            disabled={!query}
-            className="px-5 py-2 bg-[var(--accent)] text-white text-sm font-medium rounded-lg hover:bg-[var(--accent-hover)] disabled:opacity-40 transition-colors"
-          >
+            onKeyDown={e => e.key === 'Enter' && query && doTrack(query)} />
+          <button onClick={() => query && doTrack(query)} disabled={!query}
+            className="px-5 py-2 bg-[var(--accent)] text-white text-sm font-medium rounded-lg hover:bg-[var(--accent-hover)] disabled:opacity-40 transition-colors">
             Buscar
           </button>
         </div>
@@ -498,8 +491,7 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {group.guias.map(g => (
-                  <button
-                    key={g.numero}
+                  <button key={g.numero}
                     onClick={() => { setQuery(g.numero); doTrack(g.numero); }}
                     className={`px-2.5 py-1 mono text-[11px] rounded-md border transition-all ${
                       selectedGuia === g.numero
@@ -507,8 +499,7 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
                         : g.checked
                         ? 'bg-[var(--green)]/10 border-[var(--green)]/30 text-[var(--green)]'
                         : 'bg-[var(--bg-tertiary)] border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
-                    }`}
-                  >
+                    }`}>
                     {g.numero}
                   </button>
                 ))}
@@ -520,121 +511,86 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
 
       {/* Tracking Result */}
       {selectedGuia && (
-        <div className="card space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="mono text-sm font-medium">Guia {selectedGuia}</h3>
-            <div className="flex gap-2">
+        <div className="space-y-4">
+          {/* Internal status blocks */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="mono text-sm font-medium">Guia {selectedGuia}</h3>
               <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer"
-                className="text-[11px] text-[var(--accent)] hover:underline mono">
-                Ver en Andreani &rarr;
-              </a>
+                className="text-[11px] text-[var(--accent)] hover:underline mono">Abrir en Andreani &rarr;</a>
             </div>
+
+            {/* Status steps */}
+            {(() => {
+              const g = allGuias.find(x => x.numero === selectedGuia);
+              if (!g) return null;
+              return (
+                <div className="flex gap-3 mb-4">
+                  <StatusStep label="Cargado" time={new Date(g.uploadedAt).toLocaleString('es-AR')} done />
+                  <StatusStep label="Empaquetado" time={g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente'} done={g.checked} />
+                  <StatusStep
+                    label="Andreani"
+                    time={trackingData?.tracking && trackingData.source !== 'link'
+                      ? (Array.isArray(trackingData.tracking)
+                        ? (trackingData.tracking[0]?.Estado || trackingData.tracking[0]?.estado || 'Con datos')
+                        : (trackingData.tracking?.envio?.Estado || 'Con datos'))
+                      : loadingTrack ? 'Consultando...' : 'Sin datos API'}
+                    done={trackingData?.tracking && trackingData.source !== 'link'}
+                  />
+                </div>
+              );
+            })()}
+
+            {/* Scraped data block */}
+            {loadingTrack && (
+              <div className="flex items-center gap-2 py-3">
+                <div className="w-3 h-3 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs text-[var(--text-secondary)]">Consultando Andreani...</span>
+              </div>
+            )}
+
+            {trackingData && !loadingTrack && trackingData.tracking && trackingData.source !== 'link' && (
+              <div className="p-3 rounded-lg bg-[var(--bg-tertiary)] mb-4">
+                <div className="text-[10px] mono uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
+                  Datos de Andreani ({trackingData.source})
+                </div>
+                {Array.isArray(trackingData.tracking) ? (
+                  <div className="space-y-1">
+                    {trackingData.tracking.slice(0, 5).map((ev: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${i === 0 ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}`} />
+                        <span>{ev.Estado || ev.estado || ev.Descripcion || ev.descripcion || JSON.stringify(ev).slice(0, 80)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : typeof trackingData.tracking === 'object' && Object.keys(trackingData.tracking).length > 0 ? (
+                  <pre className="text-[10px] mono text-[var(--text-secondary)] overflow-auto max-h-40">
+                    {JSON.stringify(trackingData.tracking, null, 2)}
+                  </pre>
+                ) : (
+                  <div className="text-xs text-[var(--text-tertiary)]">Respuesta vacia de la API</div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Internal status */}
-          {(() => {
-            const g = allGuias.find(x => x.numero === selectedGuia);
-            if (!g) return null;
-            return (
-              <div className="flex gap-3">
-                <StatusStep label="Cargado" time={new Date(g.uploadedAt).toLocaleString('es-AR')} done />
-                <StatusStep label="Empaquetado" time={g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente'} done={g.checked} />
+          {/* Embedded Andreani page */}
+          <div className="card overflow-hidden p-0">
+            <div className="px-4 py-2 border-b border-[var(--border)] flex items-center justify-between bg-[var(--bg-tertiary)]">
+              <span className="text-[10px] mono uppercase tracking-wider text-[var(--text-tertiary)]">Vista Andreani</span>
+              <div className="flex gap-2">
+                <a href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-[var(--accent)] hover:underline mono">Abrir pestaña nueva &rarr;</a>
               </div>
-            );
-          })()}
-
-          {/* Scraped tracking data */}
-          {loadingTrack && (
-            <div className="flex items-center gap-2 py-4">
-              <div className="w-4 h-4 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-[var(--text-secondary)]">Consultando Andreani...</span>
             </div>
-          )}
-
-          {trackingData && !loadingTrack && (
-            <div>
-              {trackingData.tracking && trackingData.source !== 'link' ? (
-                <div className="space-y-3">
-                  <div className="text-[10px] mono uppercase tracking-wider text-[var(--text-tertiary)]">
-                    Datos de Andreani ({trackingData.source === 'api' ? 'API' : 'Scraping'})
-                  </div>
-
-                  {/* If it's an array of events/trazas */}
-                  {Array.isArray(trackingData.tracking) ? (
-                    <div className="space-y-1.5">
-                      {trackingData.tracking.map((ev: any, i: number) => (
-                        <div key={i} className="flex items-start gap-3 p-2.5 rounded-lg bg-[var(--bg-tertiary)]">
-                          <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${i === 0 ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}`} />
-                          <div>
-                            <div className="text-xs">{ev.Estado || ev.estado || ev.Descripcion || ev.descripcion || JSON.stringify(ev).slice(0, 120)}</div>
-                            <div className="text-[10px] mono text-[var(--text-tertiary)] mt-0.5">
-                              {ev.Fecha || ev.fecha || ev.FechaHora || ''} {ev.Sucursal || ev.sucursal || ''}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : typeof trackingData.tracking === 'object' ? (
-                    /* If it's an object with properties */
-                    <div className="space-y-2">
-                      {/* Try to show envio status */}
-                      {trackingData.tracking.envio && (
-                        <div className="p-3 rounded-lg bg-[var(--bg-tertiary)]">
-                          <div className="text-xs font-medium text-[var(--text-primary)] mb-1">
-                            Estado: {trackingData.tracking.envio.Estado || trackingData.tracking.envio.estado || 'Desconocido'}
-                          </div>
-                          {trackingData.tracking.envio.UltimoEvento && (
-                            <div className="text-[10px] text-[var(--text-secondary)]">
-                              {trackingData.tracking.envio.UltimoEvento}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {/* Show trazas if present */}
-                      {(trackingData.tracking.trazas || trackingData.tracking.eventos) && (
-                        <div className="space-y-1.5">
-                          {(trackingData.tracking.trazas || trackingData.tracking.eventos || []).map((ev: any, i: number) => (
-                            <div key={i} className="flex items-start gap-3 p-2.5 rounded-lg bg-[var(--bg-tertiary)]">
-                              <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${i === 0 ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}`} />
-                              <div>
-                                <div className="text-xs">{ev.Estado || ev.estado || ev.Descripcion || ev.descripcion || ''}</div>
-                                <div className="text-[10px] mono text-[var(--text-tertiary)] mt-0.5">
-                                  {ev.Fecha || ev.fecha || ''} {ev.Sucursal || ev.sucursal || ''}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {/* Fallback: show raw JSON prettified */}
-                      {!trackingData.tracking.envio && !trackingData.tracking.trazas && !trackingData.tracking.eventos && (
-                        <pre className="text-[10px] mono text-[var(--text-secondary)] bg-[var(--bg-tertiary)] p-3 rounded-lg overflow-auto max-h-60">
-                          {JSON.stringify(trackingData.tracking, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-[var(--text-secondary)]">{String(trackingData.tracking)}</div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-4 rounded-lg bg-[var(--bg-tertiary)] text-center">
-                  <div className="text-sm text-[var(--text-secondary)] mb-2">No se pudo obtener datos de la API de Andreani</div>
-                  <div className="text-[10px] text-[var(--text-tertiary)] mb-3">Podes consultar directamente en la web:</div>
-                  <div className="flex justify-center gap-2">
-                    <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer"
-                      className="px-3 py-1.5 bg-[var(--accent)] text-white text-xs rounded-lg hover:bg-[var(--accent-hover)] transition-colors">
-                      andreani.com/envio &rarr;
-                    </a>
-                    <a href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`} target="_blank" rel="noopener noreferrer"
-                      className="px-3 py-1.5 bg-[var(--bg-elevated)] text-[var(--text-secondary)] text-xs rounded-lg border border-[var(--border)] hover:border-[var(--accent)] transition-colors">
-                      Link alternativo &rarr;
-                    </a>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+            <iframe
+              src={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`}
+              className="w-full bg-white"
+              style={{ height: '550px' }}
+              sandbox="allow-scripts allow-same-origin allow-popups"
+              title={`Tracking ${selectedGuia}`}
+            />
+          </div>
         </div>
       )}
     </div>

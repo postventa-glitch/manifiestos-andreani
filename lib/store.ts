@@ -1,7 +1,7 @@
 import { put, list, del } from '@vercel/blob';
 import { Manifiesto, DayRecord, AuditEntry } from './types';
 
-const STORE_KEY = 'manifiestos-data.json';
+const STORE_PREFIX = 'store-v2-';
 
 interface StoreData {
   manifiestos: Manifiesto[];
@@ -9,6 +9,7 @@ interface StoreData {
   pendingFromYesterday: Manifiesto[];
   auditLog: AuditEntry[];
   _version: number;
+  _savedAt: string;
 }
 
 const emptyStore: StoreData = {
@@ -17,63 +18,130 @@ const emptyStore: StoreData = {
   pendingFromYesterday: [],
   auditLog: [],
   _version: 0,
+  _savedAt: new Date().toISOString(),
 };
 
-// In-memory cache to reduce blob reads
+// ── Robust in-memory cache ──
 let _cache: StoreData | null = null;
 let _cacheTime = 0;
-const CACHE_TTL = 2000; // 2 seconds — fresh enough for real-time, avoids hammering blob
+const CACHE_TTL = 1500;
 
-async function findBlobUrl(): Promise<string | null> {
+// ── Write mutex to prevent concurrent saves ──
+let _writeLock: Promise<void> = Promise.resolve();
+
+async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  let release: () => void;
+  const prev = _writeLock;
+  _writeLock = new Promise<void>(res => { release = res; });
+  await prev;
   try {
-    const { blobs } = await list({ prefix: STORE_KEY });
-    if (blobs.length > 0) return blobs[0].url;
-    return null;
+    return await fn();
+  } finally {
+    release!();
+  }
+}
+
+// ── Find the latest blob (by version in content, not by URL) ──
+async function findLatestBlob(): Promise<{ url: string; allUrls: string[] } | null> {
+  try {
+    const { blobs } = await list({ prefix: STORE_PREFIX });
+    if (blobs.length === 0) {
+      // Try legacy key
+      const legacy = await list({ prefix: 'manifiestos-data.json' });
+      if (legacy.blobs.length > 0) {
+        return { url: legacy.blobs[0].url, allUrls: legacy.blobs.map(b => b.url) };
+      }
+      return null;
+    }
+    // Sort by uploadedAt descending — newest first
+    const sorted = blobs.sort((a, b) =>
+      new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+    );
+    return {
+      url: sorted[0].url,
+      allUrls: sorted.map(b => b.url),
+    };
   } catch {
     return null;
   }
 }
 
 async function loadStore(): Promise<StoreData> {
-  // Return cache if fresh
   if (_cache && Date.now() - _cacheTime < CACHE_TTL) {
     return _cache;
   }
+
   try {
-    const url = await findBlobUrl();
-    if (!url) return { ...emptyStore };
-    const res = await fetch(url, { cache: 'no-store' });
+    const result = await findLatestBlob();
+    if (!result) return { ...emptyStore };
+
+    const res = await fetch(result.url, { cache: 'no-store' });
     if (!res.ok) return { ...emptyStore };
+
     const data = await res.json();
-    // Migrate old data that doesn't have auditLog
     if (!data.auditLog) data.auditLog = [];
     if (!data._version) data._version = 0;
+    if (!data._savedAt) data._savedAt = new Date().toISOString();
+
     _cache = data as StoreData;
     _cacheTime = Date.now();
+
+    // Background cleanup: delete old blobs (keep only the newest)
+    if (result.allUrls.length > 1) {
+      const oldUrls = result.allUrls.slice(1);
+      Promise.all(oldUrls.map(url => del(url).catch(() => {}))).catch(() => {});
+    }
+
     return _cache;
   } catch {
+    // If load fails but we have cache, return stale cache
+    if (_cache) return _cache;
     return { ...emptyStore };
   }
 }
 
 async function saveStore(data: StoreData): Promise<void> {
   data._version = (data._version || 0) + 1;
+  data._savedAt = new Date().toISOString();
+
   try {
-    const url = await findBlobUrl();
-    if (url) await del(url);
-    await put(STORE_KEY, JSON.stringify(data), {
+    // WRITE-FIRST: create new blob before deleting old ones
+    // Use timestamped key so blobs don't collide
+    const key = `${STORE_PREFIX}${Date.now()}.json`;
+    await put(key, JSON.stringify(data), {
       access: 'public',
       addRandomSuffix: false,
     });
-    // Update cache immediately after write
+
+    // Update cache immediately
     _cache = data;
     _cacheTime = Date.now();
+
+    // Background cleanup: delete all older blobs
+    const { blobs } = await list({ prefix: STORE_PREFIX });
+    const sorted = blobs.sort((a, b) =>
+      new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+    );
+    // Keep only the newest
+    if (sorted.length > 1) {
+      const toDelete = sorted.slice(1);
+      Promise.all(toDelete.map(b => del(b.url).catch(() => {}))).catch(() => {});
+    }
+
+    // Also cleanup legacy blobs
+    const legacy = await list({ prefix: 'manifiestos-data.json' });
+    if (legacy.blobs.length > 0) {
+      Promise.all(legacy.blobs.map(b => del(b.url).catch(() => {}))).catch(() => {});
+    }
   } catch (e) {
     console.error('Failed to save store:', e);
+    // Still update cache so local reads work
+    _cache = data;
+    _cacheTime = Date.now();
   }
 }
 
-// ── Public API (all async) ──
+// ── Public API ──
 
 export async function getAll(): Promise<{
   manifiestos: Manifiesto[];
@@ -91,35 +159,36 @@ export async function getAll(): Promise<{
 }
 
 export async function addManifiesto(m: Manifiesto): Promise<void> {
-  const store = await loadStore();
-  const exists = store.manifiestos.find(x => x.numero === m.numero);
-  if (!exists) {
-    store.manifiestos.push(m);
-    await saveStore(store);
-  }
+  return withWriteLock(async () => {
+    const store = await loadStore();
+    const exists = store.manifiestos.find(x => x.numero === m.numero);
+    if (!exists) {
+      store.manifiestos.push(m);
+      await saveStore(store);
+    }
+  });
 }
 
 export async function deleteManifiesto(manifiestoId: string): Promise<boolean> {
-  const store = await loadStore();
-  const inCurrent = store.manifiestos.find(m => m.id === manifiestoId);
-  const inPending = store.pendingFromYesterday.find(m => m.id === manifiestoId);
-  const found = inCurrent || inPending;
+  return withWriteLock(async () => {
+    const store = await loadStore();
+    const inCurrent = store.manifiestos.find(m => m.id === manifiestoId);
+    const inPending = store.pendingFromYesterday.find(m => m.id === manifiestoId);
+    const found = inCurrent || inPending;
+    if (!found) return false;
 
-  if (!found) return false;
-
-  store.manifiestos = store.manifiestos.filter(m => m.id !== manifiestoId);
-  store.pendingFromYesterday = store.pendingFromYesterday.filter(m => m.id !== manifiestoId);
-
-  store.auditLog.push({
-    guiaNumero: '-',
-    manifiestoId,
-    action: 'deleted',
-    timestamp: new Date().toISOString(),
-    detail: `Manifiesto ${found.numero} eliminado (${found.guias.length} guias)`,
+    store.manifiestos = store.manifiestos.filter(m => m.id !== manifiestoId);
+    store.pendingFromYesterday = store.pendingFromYesterday.filter(m => m.id !== manifiestoId);
+    store.auditLog.push({
+      guiaNumero: '-',
+      manifiestoId,
+      action: 'deleted',
+      timestamp: new Date().toISOString(),
+      detail: `Manifiesto ${found.numero} eliminado (${found.guias.length} guias)`,
+    });
+    await saveStore(store);
+    return true;
   });
-
-  await saveStore(store);
-  return true;
 }
 
 export async function updateGuiaCheck(
@@ -127,72 +196,73 @@ export async function updateGuiaCheck(
   guiaNumero: string,
   checked: boolean
 ): Promise<void> {
-  const store = await loadStore();
-  const allManifiestos = [...store.manifiestos, ...store.pendingFromYesterday];
-  const manifiesto = allManifiestos.find(m => m.id === manifiestoId);
-  if (manifiesto) {
-    const guia = manifiesto.guias.find(g => g.numero === guiaNumero);
-    if (guia) {
-      guia.checked = checked;
-      guia.checkedAt = checked ? new Date().toISOString() : null;
-
-      // Add audit entry
-      store.auditLog.push({
-        guiaNumero,
-        manifiestoId,
-        action: checked ? 'checked' : 'unchecked',
-        timestamp: new Date().toISOString(),
-      });
+  return withWriteLock(async () => {
+    const store = await loadStore();
+    const allManifiestos = [...store.manifiestos, ...store.pendingFromYesterday];
+    const manifiesto = allManifiestos.find(m => m.id === manifiestoId);
+    if (manifiesto) {
+      const guia = manifiesto.guias.find(g => g.numero === guiaNumero);
+      if (guia) {
+        guia.checked = checked;
+        guia.checkedAt = checked ? new Date().toISOString() : null;
+        store.auditLog.push({
+          guiaNumero,
+          manifiestoId,
+          action: checked ? 'checked' : 'unchecked',
+          timestamp: new Date().toISOString(),
+        });
+      }
+      await saveStore(store);
     }
-    await saveStore(store);
-  }
+  });
 }
 
 export async function finalizeDay(): Promise<DayRecord | null> {
-  const store = await loadStore();
-  if (store.manifiestos.length === 0 && store.pendingFromYesterday.length === 0) return null;
+  return withWriteLock(async () => {
+    const store = await loadStore();
+    if (store.manifiestos.length === 0 && store.pendingFromYesterday.length === 0) return null;
 
-  const today = new Date().toLocaleDateString('es-AR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-  });
+    const today = new Date().toLocaleDateString('es-AR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+    });
 
-  const allActive = [...store.manifiestos, ...store.pendingFromYesterday];
-  const totalGuias = allActive.reduce((sum, m) => sum + m.guias.length, 0);
-  const completedGuias = allActive.reduce(
-    (sum, m) => sum + m.guias.filter(g => g.checked).length, 0
-  );
+    const allActive = [...store.manifiestos, ...store.pendingFromYesterday];
+    const totalGuias = allActive.reduce((sum, m) => sum + m.guias.length, 0);
+    const completedGuias = allActive.reduce(
+      (sum, m) => sum + m.guias.filter(g => g.checked).length, 0
+    );
 
-  const record: DayRecord = {
-    date: today,
-    manifiestos: JSON.parse(JSON.stringify(allActive)),
-    finalizedAt: new Date().toISOString(),
-    totalGuias,
-    completedGuias,
-    auditLog: [...store.auditLog],
-  };
+    const record: DayRecord = {
+      date: today,
+      manifiestos: JSON.parse(JSON.stringify(allActive)),
+      finalizedAt: new Date().toISOString(),
+      totalGuias,
+      completedGuias,
+      auditLog: [...store.auditLog],
+    };
 
-  store.history.push(record);
+    store.history.push(record);
 
-  // Move unchecked guias to pending for next day
-  const pendingManifiestos: Manifiesto[] = [];
-  for (const m of allActive) {
-    const unchecked = m.guias.filter(g => !g.checked);
-    if (unchecked.length > 0) {
-      pendingManifiestos.push({
-        ...m,
-        id: m.id + '-pending-' + Date.now(),
-        guias: unchecked.map(g => ({ ...g, checked: false, checkedAt: null })),
-        totalPaquetes: unchecked.reduce((s, g) => s + g.paquetes, 0),
-      });
+    const pendingManifiestos: Manifiesto[] = [];
+    for (const m of allActive) {
+      const unchecked = m.guias.filter(g => !g.checked);
+      if (unchecked.length > 0) {
+        pendingManifiestos.push({
+          ...m,
+          id: m.id + '-pending-' + Date.now(),
+          guias: unchecked.map(g => ({ ...g, checked: false, checkedAt: null })),
+          totalPaquetes: unchecked.reduce((s, g) => s + g.paquetes, 0),
+        });
+      }
     }
-  }
 
-  store.pendingFromYesterday = pendingManifiestos;
-  store.manifiestos = [];
-  store.auditLog = [];
+    store.pendingFromYesterday = pendingManifiestos;
+    store.manifiestos = [];
+    store.auditLog = [];
 
-  await saveStore(store);
-  return record;
+    await saveStore(store);
+    return record;
+  });
 }
 
 export async function getHistory(): Promise<DayRecord[]> {
