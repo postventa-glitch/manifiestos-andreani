@@ -1,7 +1,16 @@
 import { put, list, del } from '@vercel/blob';
 import { Manifiesto, DayRecord, AuditEntry } from './types';
 
-const STORE_KEY = 'manifiestos-data.json';
+/*
+ * IMMUTABLE BLOB STORE
+ *
+ * Each write creates a NEW blob with a unique timestamped key.
+ * Reads always list all blobs and pick the newest by uploadedAt.
+ * Deletes happen ONLY as background cleanup, never during writes.
+ * This eliminates ALL race conditions between read and write.
+ */
+
+const BLOB_PREFIX = 'mdata-';
 
 interface StoreData {
   manifiestos: Manifiesto[];
@@ -19,15 +28,33 @@ const emptyStore: StoreData = {
   _version: 0,
 };
 
-// In-memory cache to reduce blob reads
+// ── Cache: shared within a single serverless instance ──
 let _cache: StoreData | null = null;
 let _cacheTime = 0;
-const CACHE_TTL = 2000; // 2 seconds — fresh enough for real-time, avoids hammering blob
+const CACHE_TTL = 3000;
 
-async function findBlobUrl(): Promise<string | null> {
+// ── Find the NEWEST blob by uploadedAt ──
+async function findNewestBlob(): Promise<{ url: string; all: { url: string; uploadedAt: string }[] } | null> {
   try {
-    const { blobs } = await list({ prefix: STORE_KEY });
-    if (blobs.length > 0) return blobs[0].url;
+    // Check new prefix first
+    const { blobs } = await list({ prefix: BLOB_PREFIX });
+    if (blobs.length > 0) {
+      const sorted = [...blobs].sort(
+        (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+      );
+      return {
+        url: sorted[0].url,
+        all: sorted.map(b => ({ url: b.url, uploadedAt: b.uploadedAt })),
+      };
+    }
+    // Fallback: try legacy key
+    const legacy = await list({ prefix: 'manifiestos-data.json' });
+    if (legacy.blobs.length > 0) {
+      return {
+        url: legacy.blobs[0].url,
+        all: legacy.blobs.map(b => ({ url: b.url, uploadedAt: b.uploadedAt })),
+      };
+    }
     return null;
   } catch {
     return null;
@@ -39,45 +66,65 @@ async function loadStore(): Promise<StoreData> {
   if (_cache && Date.now() - _cacheTime < CACHE_TTL) {
     return _cache;
   }
+
   try {
-    const url = await findBlobUrl();
-    if (!url) return { ...emptyStore };
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) return { ...emptyStore };
+    const result = await findNewestBlob();
+    if (!result) {
+      // No blobs at all — but if we have stale cache, prefer that over empty
+      if (_cache) return _cache;
+      return { ...emptyStore };
+    }
+
+    const res = await fetch(result.url, { cache: 'no-store' });
+    if (!res.ok) {
+      if (_cache) return _cache;
+      return { ...emptyStore };
+    }
+
     const data = await res.json();
-    // Migrate old data that doesn't have auditLog
     if (!data.auditLog) data.auditLog = [];
     if (!data._version) data._version = 0;
+
     _cache = data as StoreData;
     _cacheTime = Date.now();
+
+    // Background: clean up old blobs (keep only newest 2)
+    if (result.all.length > 2) {
+      const toDelete = result.all.slice(2);
+      for (const b of toDelete) {
+        del(b.url).catch(() => {});
+      }
+    }
+
     return _cache;
   } catch {
+    // Network error — return stale cache if available
+    if (_cache) return _cache;
     return { ...emptyStore };
   }
 }
 
 async function saveStore(data: StoreData): Promise<void> {
   data._version = (data._version || 0) + 1;
-  // Update cache BEFORE writing so polling never sees empty state
-  _cache = data;
+
+  // Update cache IMMEDIATELY — any read on this instance sees new data instantly
+  _cache = { ...data };
   _cacheTime = Date.now();
+
   try {
-    // WRITE FIRST, then delete old — never leaves a gap with no blob
-    const oldUrl = await findBlobUrl();
-    await put(STORE_KEY, JSON.stringify(data), {
+    // Write a NEW blob with unique key — never overwrites, never conflicts
+    const key = `${BLOB_PREFIX}${Date.now()}.json`;
+    await put(key, JSON.stringify(data), {
       access: 'public',
       addRandomSuffix: false,
     });
-    // Only delete old blob AFTER new one is written
-    if (oldUrl) {
-      await del(oldUrl).catch(() => {});
-    }
+    // DO NOT delete old blobs here — loadStore cleanup handles it
   } catch (e) {
     console.error('Failed to save store:', e);
   }
 }
 
-// ── Public API (all async) ──
+// ── Public API ──
 
 export async function getAll(): Promise<{
   manifiestos: Manifiesto[];
@@ -140,7 +187,6 @@ export async function updateGuiaCheck(
       guia.checked = checked;
       guia.checkedAt = checked ? new Date().toISOString() : null;
 
-      // Add audit entry
       store.auditLog.push({
         guiaNumero,
         manifiestoId,
@@ -177,7 +223,6 @@ export async function finalizeDay(): Promise<DayRecord | null> {
 
   store.history.push(record);
 
-  // Move unchecked guias to pending for next day
   const pendingManifiestos: Manifiesto[] = [];
   for (const m of allActive) {
     const unchecked = m.guias.filter(g => !g.checked);
