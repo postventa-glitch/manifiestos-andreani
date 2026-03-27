@@ -5,19 +5,21 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    // List ALL blobs in the store
-    const allBlobs = await list({ limit: 50 });
+    // Search for manifiestos data blobs specifically
+    const searches = ['manifiestos-v3.json', 'mdata-', 'manifiestos-data.json', ''];
+    const results: Record<string, any[]> = {};
 
-    const blobInfo = allBlobs.blobs.map(b => ({
-      pathname: b.pathname,
-      url: b.url.substring(0, 80) + '...',
-      size: b.size,
-      uploadedAt: b.uploadedAt,
-    }));
+    for (const prefix of searches) {
+      const { blobs } = await list({ prefix, limit: 20 });
+      results[prefix || 'ALL'] = blobs.map(b => ({
+        pathname: b.pathname,
+        size: b.size,
+        uploadedAt: b.uploadedAt,
+      }));
+    }
 
     return NextResponse.json({
-      totalBlobs: allBlobs.blobs.length,
-      blobs: blobInfo,
+      searches: results,
       storeVersion: 'v3-single-key',
       timestamp: new Date().toISOString(),
     });
