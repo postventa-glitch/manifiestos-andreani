@@ -1,16 +1,16 @@
-import { put, list, del } from '@vercel/blob';
+import { put, list } from '@vercel/blob';
 import { Manifiesto, DayRecord, AuditEntry } from './types';
 
 /*
- * IMMUTABLE BLOB STORE
+ * SINGLE-KEY BLOB STORE v3
  *
- * Each write creates a NEW blob with a unique timestamped key.
- * Reads always list all blobs and pick the newest by uploadedAt.
- * Deletes happen ONLY as background cleanup, never during writes.
- * This eliminates ALL race conditions between read and write.
+ * Strategy: ONE fixed blob key, overwrite with put(), read by DIRECT URL.
+ * NEVER uses list() during normal reads — only once on cold start to discover URL.
+ * NEVER returns empty data if we previously had data (version guard).
+ * NEVER deletes anything.
  */
 
-const BLOB_PREFIX = 'mdata-';
+const BLOB_KEY = 'manifiestos-v3.json';
 
 interface StoreData {
   manifiestos: Manifiesto[];
@@ -28,99 +28,120 @@ const emptyStore: StoreData = {
   _version: 0,
 };
 
-// ── Cache: shared within a single serverless instance ──
+// ── Globals: persist within a single serverless instance ──
 let _cache: StoreData | null = null;
 let _cacheTime = 0;
+let _blobUrl: string | null = null; // Direct URL to the blob — avoids list() on reads
 const CACHE_TTL = 3000;
 
-// ── Find the NEWEST blob by uploadedAt ──
-async function findNewestBlob(): Promise<{ url: string; all: { url: string; uploadedAt: string }[] } | null> {
+/*
+ * Discover the blob URL. Called ONCE per cold start.
+ * After first write, _blobUrl is set from put() response.
+ */
+async function discoverBlobUrl(): Promise<string | null> {
+  if (_blobUrl) return _blobUrl;
+
   try {
-    // Check new prefix first
-    const { blobs } = await list({ prefix: BLOB_PREFIX });
+    // 1. Try current key
+    const { blobs } = await list({ prefix: BLOB_KEY, limit: 1 });
     if (blobs.length > 0) {
-      const sorted = [...blobs].sort(
-        (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
-      );
-      return {
-        url: sorted[0].url,
-        all: sorted.map(b => ({ url: b.url, uploadedAt: b.uploadedAt })),
-      };
+      _blobUrl = blobs[0].url;
+      return _blobUrl;
     }
-    // Fallback: try legacy key
-    const legacy = await list({ prefix: 'manifiestos-data.json' });
-    if (legacy.blobs.length > 0) {
-      return {
-        url: legacy.blobs[0].url,
-        all: legacy.blobs.map(b => ({ url: b.url, uploadedAt: b.uploadedAt })),
-      };
+
+    // 2. Try legacy keys and migrate
+    for (const prefix of ['mdata-', 'manifiestos-data.json']) {
+      const legacy = await list({ prefix, limit: 5 });
+      if (legacy.blobs.length > 0) {
+        // Sort by newest
+        const sorted = [...legacy.blobs].sort(
+          (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+        );
+        const res = await fetch(sorted[0].url, { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          // Migrate to new key
+          const blob = await put(BLOB_KEY, JSON.stringify(data), {
+            access: 'public',
+            addRandomSuffix: false,
+          });
+          _blobUrl = blob.url;
+          console.log(`Migrated from ${prefix} to ${BLOB_KEY}`);
+          return _blobUrl;
+        }
+      }
     }
+
     return null;
-  } catch {
+  } catch (e) {
+    console.error('discoverBlobUrl error:', e);
     return null;
   }
 }
 
+/*
+ * Read the store. Uses direct URL fetch (no list()).
+ * Falls back to stale cache on any error.
+ * NEVER returns empty if cache has data (version guard).
+ */
 async function loadStore(): Promise<StoreData> {
-  // Return cache if fresh
+  // Return fresh cache
   if (_cache && Date.now() - _cacheTime < CACHE_TTL) {
     return _cache;
   }
 
   try {
-    const result = await findNewestBlob();
-    if (!result) {
-      // No blobs at all — but if we have stale cache, prefer that over empty
-      if (_cache) return _cache;
-      return { ...emptyStore };
+    const url = await discoverBlobUrl();
+    if (!url) {
+      // No blob found — return cache if we have one, else empty
+      return _cache || { ...emptyStore };
     }
 
-    const res = await fetch(result.url, { cache: 'no-store' });
+    // Direct fetch with cache buster — bypasses CDN completely
+    const res = await fetch(`${url}?_cb=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) {
-      if (_cache) return _cache;
-      return { ...emptyStore };
+      return _cache || { ...emptyStore };
     }
 
     const data = await res.json();
     if (!data.auditLog) data.auditLog = [];
     if (!data._version) data._version = 0;
 
-    _cache = data as StoreData;
-    _cacheTime = Date.now();
-
-    // Background: clean up old blobs (keep only newest 2)
-    if (result.all.length > 2) {
-      const toDelete = result.all.slice(2);
-      for (const b of toDelete) {
-        del(b.url).catch(() => {});
-      }
+    // VERSION GUARD: never downgrade to older/empty data
+    if (_cache && _cache._version > 0 && data._version < _cache._version) {
+      return _cache;
     }
 
+    _cache = data as StoreData;
+    _cacheTime = Date.now();
     return _cache;
   } catch {
-    // Network error — return stale cache if available
-    if (_cache) return _cache;
-    return { ...emptyStore };
+    // Network error — ALWAYS prefer stale cache over empty
+    return _cache || { ...emptyStore };
   }
 }
 
+/*
+ * Write the store. Overwrites the single blob key.
+ * Updates cache IMMEDIATELY so same-instance reads see new data.
+ * Updates _blobUrl from put() response.
+ */
 async function saveStore(data: StoreData): Promise<void> {
   data._version = (data._version || 0) + 1;
 
-  // Update cache IMMEDIATELY — any read on this instance sees new data instantly
-  _cache = { ...data };
+  // Instant cache update
+  _cache = JSON.parse(JSON.stringify(data));
   _cacheTime = Date.now();
 
   try {
-    // Write a NEW blob with unique key — never overwrites, never conflicts
-    const key = `${BLOB_PREFIX}${Date.now()}.json`;
-    await put(key, JSON.stringify(data), {
+    const blob = await put(BLOB_KEY, JSON.stringify(data), {
       access: 'public',
       addRandomSuffix: false,
     });
-    // DO NOT delete old blobs here — loadStore cleanup handles it
+    // Cache the URL — future reads skip list() entirely
+    _blobUrl = blob.url;
   } catch (e) {
-    console.error('Failed to save store:', e);
+    console.error('saveStore error:', e);
   }
 }
 

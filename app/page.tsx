@@ -48,12 +48,19 @@ export default function PublicPage() {
       const res = await fetch('/api/manifiestos');
       const data = await res.json();
       const serverVersion = data._version || 0;
-      // Only update if server has newer data
-      if (serverVersion >= lastVersion.current) {
-        setManifiestos(data.manifiestos || []);
-        setPending(data.pending || []);
-        setAuditLog(data.auditLog || []);
-        lastVersion.current = serverVersion;
+      const hasServerData = (data.manifiestos?.length > 0 || data.pending?.length > 0);
+      const hasLocalData = lastVersion.current > 0;
+
+      // NEVER replace good data with empty — only accept if:
+      // 1. Server has actual data, OR
+      // 2. We don't have any data yet (first load)
+      if (hasServerData || !hasLocalData) {
+        if (serverVersion >= lastVersion.current || hasServerData) {
+          setManifiestos(data.manifiestos || []);
+          setPending(data.pending || []);
+          setAuditLog(data.auditLog || []);
+          lastVersion.current = Math.max(serverVersion, lastVersion.current);
+        }
       }
     } catch {
       // silent

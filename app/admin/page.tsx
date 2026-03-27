@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface Guia {
   numero: string;
@@ -49,6 +49,7 @@ export default function AdminPage() {
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<any[]>([]);
+  const lastVersion = useRef<number>(0);
 
   const fetchData = useCallback(async () => {
     try {
@@ -58,12 +59,22 @@ export default function AdminPage() {
       ]);
       const mData = await mRes.json();
       const hData = await hRes.json();
-      setManifiestos(mData.manifiestos || []);
-      setPending(mData.pending || []);
-      setAuditLog(mData.auditLog || []);
+      const serverVersion = mData._version || 0;
+      const hasServerData = (mData.manifiestos?.length > 0 || mData.pending?.length > 0);
+      const hasLocalData = lastVersion.current > 0;
+
+      // NEVER replace good data with empty response
+      if (hasServerData || !hasLocalData) {
+        if (serverVersion >= lastVersion.current || hasServerData) {
+          setManifiestos(mData.manifiestos || []);
+          setPending(mData.pending || []);
+          setAuditLog(mData.auditLog || []);
+          lastVersion.current = Math.max(serverVersion, lastVersion.current);
+        }
+      }
       setHistory(hData.history || []);
     } catch {
-      // silent on error
+      // silent on error — keep existing data
     }
   }, []);
 
