@@ -1,6 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useSSE, diffSSEStates } from '@/app/hooks/useSSE';
 
 interface Guia {
   numero: string;
@@ -39,34 +42,42 @@ export default function PublicPage() {
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeResult, setFinalizeResult] = useState<string | null>(null);
   const pendingChecks = useRef<Set<string>>(new Set());
-  const lastVersion = useRef<number>(0);
+  const [highlightedGuia, setHighlightedGuia] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    // Skip polling if there are pending check operations
-    if (pendingChecks.current.size > 0) return;
-    try {
-      const res = await fetch('/api/manifiestos');
-      const data = await res.json();
-      const serverVersion = data._version || 0;
-      // Only update if server has newer data
-      if (serverVersion >= lastVersion.current) {
-        setManifiestos(data.manifiestos || []);
-        setPending(data.pending || []);
-        setAuditLog(data.auditLog || []);
-        lastVersion.current = serverVersion;
-      }
-    } catch {
-      // silent
-    } finally {
+  // SSE for real-time updates
+  const { connected } = useSSE({
+    onUpdate: (prev, next) => {
+      // Skip if we have pending local operations
+      if (pendingChecks.current.size > 0) return;
+
+      setManifiestos(next.manifiestos || []);
+      setPending(next.pending || []);
+      setAuditLog(next.auditLog || []);
       setLoading(false);
-    }
-  }, []);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 4000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+      // Show toast notifications for changes from other users
+      if (prev) {
+        const changes = diffSSEStates(prev, next);
+        for (const change of changes) {
+          if (change.type === 'guia_checked') {
+            toast.success(change.detail, { duration: 2000 });
+            // Highlight the changed guide briefly
+            const guiaNum = change.detail.match(/Guia (\d+)/)?.[1];
+            if (guiaNum) {
+              setHighlightedGuia(guiaNum);
+              setTimeout(() => setHighlightedGuia(null), 2000);
+            }
+          } else if (change.type === 'guia_unchecked') {
+            toast.warning(change.detail, { duration: 2000 });
+          } else if (change.type === 'manifest_added') {
+            toast.info(change.detail, { duration: 3000 });
+          } else if (change.type === 'manifest_deleted') {
+            toast.error(change.detail, { duration: 3000 });
+          }
+        }
+      }
+    },
+  });
 
   const handleCheck = async (manifiestoId: string, guiaNumero: string, checked: boolean) => {
     const key = `${manifiestoId}-${guiaNumero}`;
@@ -89,8 +100,6 @@ export default function PublicPage() {
 
     setManifiestos(prev => updateList(prev));
     setPending(prev => updateList(prev));
-
-    // Add optimistic audit entry
     setAuditLog(prev => [
       ...prev,
       { guiaNumero, manifiestoId, action: checked ? 'checked' : 'unchecked', timestamp: new Date().toISOString() },
@@ -103,12 +112,9 @@ export default function PublicPage() {
         body: JSON.stringify({ manifiestoId, guiaNumero, checked }),
       });
       const data = await res.json();
-      const serverVersion = data._version || 0;
-      // Always sync after our own write
       setManifiestos(data.manifiestos || []);
       setPending(data.pending || []);
       setAuditLog(data.auditLog || []);
-      lastVersion.current = serverVersion;
     } finally {
       pendingChecks.current.delete(key);
     }
@@ -133,7 +139,7 @@ export default function PublicPage() {
             ? `${data.record.totalGuias - data.record.completedGuias} pasan al dia siguiente.`
             : 'Todo completo!')
         );
-        await fetchData();
+        toast.success('Dia finalizado exitosamente');
       } else {
         setFinalizeResult('Error: ' + (data.error || 'No se pudo finalizar'));
       }
@@ -182,6 +188,13 @@ export default function PublicPage() {
       <div className="max-w-[860px] mx-auto bg-azul text-white flex items-center justify-between px-7 py-3.5 rounded-t-xl">
         <div className="font-mono text-[22px] font-semibold tracking-[3px]">ANDREANI</div>
         <div className="flex items-center gap-4">
+          {/* SSE Connection indicator */}
+          <div className="flex items-center gap-1.5">
+            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'} ${connected ? 'animate-pulse' : ''}`} />
+            <span className="font-mono text-[9px] text-white/50">
+              {connected ? 'EN VIVO' : 'RECONECTANDO'}
+            </span>
+          </div>
           <div className="font-mono text-xs opacity-65">Manifiestos de Carga &middot; {today}</div>
           <button
             onClick={() => setShowAudit(!showAudit)}
@@ -197,7 +210,7 @@ export default function PublicPage() {
       <div className="max-w-[860px] mx-auto bg-azul-medio flex items-center gap-3.5 px-7 py-2.5">
         <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
           <div
-            className="h-full bg-[#4fc3f7] rounded-full transition-all duration-400"
+            className="h-full bg-[#4fc3f7] rounded-full transition-all duration-500"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -207,31 +220,40 @@ export default function PublicPage() {
       </div>
 
       {/* Audit Log Panel */}
-      {showAudit && auditLog.length > 0 && (
-        <div className="max-w-[860px] mx-auto bg-gray-900 text-gray-300 px-7 py-4 max-h-48 overflow-y-auto">
-          <div className="font-mono text-[10px] uppercase tracking-wider text-gray-500 mb-2">
-            Historial de cambios ({auditLog.length})
-          </div>
-          <div className="space-y-1">
-            {[...auditLog].reverse().map((entry, i) => (
-              <div key={i} className="flex items-center gap-3 font-mono text-[11px]">
-                <span className="text-gray-500 w-16 shrink-0">
-                  {new Date(entry.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                </span>
-                <span className={`w-5 text-center ${entry.action === 'checked' ? 'text-green-400' : 'text-red-400'}`}>
-                  {entry.action === 'checked' ? '+' : '-'}
-                </span>
-                <span className="text-gray-400">{entry.guiaNumero}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                  entry.action === 'checked' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                }`}>
-                  {entry.action === 'checked' ? 'HECHO' : 'DESHECHO'}
-                </span>
+      <AnimatePresence>
+        {showAudit && auditLog.length > 0 && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="max-w-[860px] mx-auto bg-gray-900 text-gray-300 overflow-hidden"
+          >
+            <div className="px-7 py-4 max-h-48 overflow-y-auto">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-gray-500 mb-2">
+                Historial de cambios ({auditLog.length})
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+              <div className="space-y-1">
+                {[...auditLog].reverse().map((entry, i) => (
+                  <div key={i} className="flex items-center gap-3 font-mono text-[11px]">
+                    <span className="text-gray-500 w-16 shrink-0">
+                      {new Date(entry.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                    <span className={`w-5 text-center ${entry.action === 'checked' ? 'text-green-400' : 'text-red-400'}`}>
+                      {entry.action === 'checked' ? '+' : '-'}
+                    </span>
+                    <span className="text-gray-400">{entry.guiaNumero}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      entry.action === 'checked' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+                    }`}>
+                      {entry.action === 'checked' ? 'HECHO' : 'DESHECHO'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Container */}
       <div className="max-w-[860px] mx-auto bg-white rounded-b-xl overflow-hidden shadow-[0_8px_40px_rgba(26,46,90,0.12)]">
@@ -245,7 +267,7 @@ export default function PublicPage() {
         )}
 
         {pending.map(m => (
-          <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} auditLog={auditLog} isPending />
+          <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} auditLog={auditLog} highlightedGuia={highlightedGuia} isPending />
         ))}
 
         {pending.length > 0 && manifiestos.length > 0 && (
@@ -257,7 +279,7 @@ export default function PublicPage() {
         )}
 
         {manifiestos.map(m => (
-          <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} auditLog={auditLog} />
+          <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} auditLog={auditLog} highlightedGuia={highlightedGuia} />
         ))}
 
         {/* Finalize Day Button */}
@@ -295,18 +317,19 @@ function ManifiestoCard({
   manifiesto: m,
   onCheck,
   auditLog,
+  highlightedGuia,
   isPending,
 }: {
   manifiesto: Manifiesto;
   onCheck: (mId: string, gNum: string, checked: boolean) => void;
   auditLog: AuditEntry[];
+  highlightedGuia: string | null;
   isPending?: boolean;
 }) {
   const done = m.guias.filter(g => g.checked).length;
   const total = m.guias.length;
   const isComplete = done === total;
 
-  // Get audit entries for this manifest's guides
   const getGuiaAudit = (guiaNumero: string) =>
     auditLog.filter(e => e.guiaNumero === guiaNumero && e.manifiestoId === m.id);
 
@@ -379,9 +402,12 @@ function ManifiestoCard({
           {m.guias.map((g, i) => {
             const audit = getGuiaAudit(g.numero);
             const wasUnchecked = audit.some(e => e.action === 'unchecked');
+            const isHighlighted = highlightedGuia === g.numero;
             return (
-              <tr
+              <motion.tr
                 key={g.numero}
+                animate={isHighlighted ? { backgroundColor: ['#bbf7d0', '#ffffff'] } : {}}
+                transition={{ duration: 1.5 }}
                 className={`border-b border-[#c8d6e8] transition-colors ${
                   g.checked ? 'guia-checked bg-[#eafaf1]' : wasUnchecked ? 'bg-red-50/30' : 'hover:bg-azul-claro'
                 }`}
@@ -425,7 +451,7 @@ function ManifiestoCard({
                     />
                   </div>
                 </td>
-              </tr>
+              </motion.tr>
             );
           })}
         </tbody>

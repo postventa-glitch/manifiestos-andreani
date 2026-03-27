@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { Toaster } from '@/app/components/Toaster';
 
 export const metadata: Metadata = {
   title: 'Manifiestos Andreani',
@@ -11,6 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es">
       <body className="bg-[#eef2f8] min-h-screen">
         {children}
+        <Toaster />
       </body>
     </html>
   );

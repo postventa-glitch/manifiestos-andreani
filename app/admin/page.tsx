@@ -1,6 +1,18 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useSSE, diffSSEStates } from '@/app/hooks/useSSE';
+import { ScoreWidget } from '@/app/components/dashboard/ScoreWidget';
+import { EstimatedCompletionWidget } from '@/app/components/dashboard/EstimatedCompletionWidget';
+import { AnomalyAlertWidget } from '@/app/components/dashboard/AnomalyAlertWidget';
+import { RiskScoreWidget } from '@/app/components/dashboard/RiskScoreWidget';
+import { SuggestionWidget } from '@/app/components/dashboard/SuggestionWidget';
+import { CompletionTrendChart } from '@/app/components/charts/CompletionTrendChart';
+import { ActivityHeatmap } from '@/app/components/charts/ActivityHeatmap';
+import { DailyBarChart } from '@/app/components/charts/DailyBarChart';
+import type { AnalyticsData } from '@/lib/types';
 
 interface Guia {
   numero: string;
@@ -49,29 +61,47 @@ export default function AdminPage() {
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<any[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [mRes, hRes] = await Promise.all([
-        fetch('/api/manifiestos'),
-        fetch('/api/finalize'),
-      ]);
-      const mData = await mRes.json();
-      const hData = await hRes.json();
-      setManifiestos(mData.manifiestos || []);
-      setPending(mData.pending || []);
-      setAuditLog(mData.auditLog || []);
-      setHistory(hData.history || []);
-    } catch {
-      // silent on error
-    }
+  // SSE for real-time updates
+  const { connected } = useSSE({
+    onUpdate: (prev, next) => {
+      setManifiestos(next.manifiestos || []);
+      setPending(next.pending || []);
+      setAuditLog(next.auditLog || []);
+
+      // Show toast for changes
+      if (prev) {
+        const changes = diffSSEStates(prev, next);
+        for (const change of changes) {
+          if (change.type === 'guia_checked') {
+            toast.success(change.detail, { duration: 2000 });
+          } else if (change.type === 'guia_unchecked') {
+            toast.warning(change.detail, { duration: 2000 });
+          }
+        }
+
+        // Refresh analytics on any change
+        if (changes.length > 0) {
+          fetchAnalytics();
+        }
+      }
+    },
+  });
+
+  // Fetch history on mount
+  useEffect(() => {
+    fetch('/api/finalize').then(r => r.json()).then(d => setHistory(d.history || [])).catch(() => {});
+    fetchAnalytics();
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  const fetchAnalytics = async () => {
+    try {
+      const res = await fetch('/api/analytics');
+      const data = await res.json();
+      if (!data.error) setAnalytics(data);
+    } catch { /* silent */ }
+  };
 
   const handleUpload = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -87,6 +117,10 @@ export default function AdminPage() {
       setUploadResults(data.results || []);
       setManifiestos(data.manifiestos || []);
       form.reset();
+      const successCount = (data.results || []).filter((r: any) => r.success).length;
+      if (successCount > 0) {
+        toast.success(`${successCount} manifiesto(s) cargado(s)`);
+      }
     } catch {
       setUploadResults([{ success: false, error: 'Error de conexion' }]);
     } finally {
@@ -107,10 +141,9 @@ export default function AdminPage() {
         setManifiestos(data.manifiestos || []);
         setPending(data.pending || []);
         setAuditLog(data.auditLog || []);
+        toast.info(`Manifiesto ${numero} eliminado`);
       }
-    } catch {
-      // silent
-    }
+    } catch { /* silent */ }
   };
 
   const handleFinalize = async () => {
@@ -119,16 +152,16 @@ export default function AdminPage() {
     const data = await res.json();
     if (data.record) {
       setHistory(data.history);
-      await fetchData();
+      toast.success('Dia finalizado exitosamente');
     }
   };
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'upload', label: 'Subir Manifiestos' },
-    { key: 'dashboard', label: 'Dashboard' },
-    { key: 'tracking', label: 'Tracking' },
-    { key: 'audit', label: 'Cambios' },
-    { key: 'history', label: 'Historial' },
+  const tabs: { key: Tab; label: string; icon: string }[] = [
+    { key: 'upload', label: 'Manifiestos', icon: '📄' },
+    { key: 'dashboard', label: 'Dashboard IA', icon: '🧠' },
+    { key: 'tracking', label: 'Tracking', icon: '📍' },
+    { key: 'audit', label: 'Cambios', icon: '📝' },
+    { key: 'history', label: 'Historial', icon: '📋' },
   ];
 
   const allManifiestos = [...pending, ...manifiestos];
@@ -142,6 +175,13 @@ export default function AdminPage() {
         <div className="flex items-center gap-4">
           <span className="font-mono text-xl font-semibold tracking-[3px]">ANDREANI</span>
           <span className="text-white/50 font-mono text-xs">Panel Admin</span>
+          {/* Connection status */}
+          <div className="flex items-center gap-1.5 ml-2">
+            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+            <span className="font-mono text-[9px] text-white/40">
+              {connected ? 'LIVE' : 'OFFLINE'}
+            </span>
+          </div>
         </div>
         <a href="/" className="text-white/70 hover:text-white font-mono text-xs transition-colors">
           Ver Frontend Publico &rarr;
@@ -154,12 +194,13 @@ export default function AdminPage() {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-5 py-3 font-mono text-xs tracking-wider uppercase transition-colors ${
+            className={`px-5 py-3 font-mono text-xs tracking-wider uppercase transition-colors flex items-center gap-2 ${
               tab === t.key
                 ? 'bg-white text-azul font-semibold rounded-t-lg'
                 : 'text-white/70 hover:text-white'
             }`}
           >
+            <span className="text-sm">{t.icon}</span>
             {t.label}
           </button>
         ))}
@@ -175,28 +216,39 @@ export default function AdminPage() {
       </div>
 
       {/* Content */}
-      <div className="max-w-6xl mx-auto p-6">
-        {tab === 'upload' && (
-          <UploadTab
-            uploading={uploading}
-            uploadResults={uploadResults}
-            manifiestos={manifiestos}
-            pending={pending}
-            onUpload={handleUpload}
-            onDelete={handleDelete}
-          />
-        )}
-        {tab === 'dashboard' && (
-          <DashboardTab
-            manifiestos={manifiestos}
-            pending={pending}
-            totalGuias={totalGuias}
-            checkedGuias={checkedGuias}
-          />
-        )}
-        {tab === 'tracking' && <TrackingTab allManifiestos={allManifiestos} />}
-        {tab === 'audit' && <AuditTab auditLog={auditLog} allManifiestos={allManifiestos} />}
-        {tab === 'history' && <HistoryTab history={history} />}
+      <div className="max-w-7xl mx-auto p-6">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+          >
+            {tab === 'upload' && (
+              <UploadTab
+                uploading={uploading}
+                uploadResults={uploadResults}
+                manifiestos={manifiestos}
+                pending={pending}
+                onUpload={handleUpload}
+                onDelete={handleDelete}
+              />
+            )}
+            {tab === 'dashboard' && (
+              <DashboardTab
+                manifiestos={manifiestos}
+                pending={pending}
+                totalGuias={totalGuias}
+                checkedGuias={checkedGuias}
+                analytics={analytics}
+              />
+            )}
+            {tab === 'tracking' && <TrackingTab allManifiestos={allManifiestos} />}
+            {tab === 'audit' && <AuditTab auditLog={auditLog} allManifiestos={allManifiestos} />}
+            {tab === 'history' && <HistoryTab history={history} />}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -220,7 +272,7 @@ function UploadTab({
 }) {
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="dashboard-card">
         <h2 className="font-mono text-lg font-semibold text-azul mb-4">Subir PDFs de Manifiestos</h2>
         <form onSubmit={onUpload} className="space-y-4">
           <div className="border-2 border-dashed border-azul-claro rounded-lg p-8 text-center hover:border-acento transition-colors">
@@ -244,7 +296,7 @@ function UploadTab({
 
         {uploadResults.length > 0 && (
           <div className="mt-4 space-y-2">
-            {uploadResults.map((r, i) => (
+            {uploadResults.map((r: any, i: number) => (
               <div
                 key={i}
                 className={`p-3 rounded-lg font-mono text-sm ${
@@ -266,9 +318,8 @@ function UploadTab({
         )}
       </div>
 
-      {/* Current manifests */}
       {(manifiestos.length > 0 || pending.length > 0) && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
+        <div className="dashboard-card">
           {pending.length > 0 && (
             <>
               <h3 className="font-mono text-sm font-semibold text-amber-700 mb-3 uppercase tracking-wider">
@@ -299,37 +350,36 @@ function UploadTab({
   );
 }
 
-/* ─── DASHBOARD TAB ─── */
+/* ─── DASHBOARD TAB (NEW - AI POWERED) ─── */
 function DashboardTab({
   manifiestos,
   pending,
   totalGuias,
   checkedGuias,
+  analytics,
 }: {
   manifiestos: Manifiesto[];
   pending: Manifiesto[];
   totalGuias: number;
   checkedGuias: number;
+  analytics: AnalyticsData | null;
 }) {
   const pct = totalGuias > 0 ? Math.round((checkedGuias / totalGuias) * 100) : 0;
 
-  // KPI: Calculate avg time between upload and check
+  // KPI: avg time
   const allGuias = [...manifiestos, ...pending].flatMap(m =>
-    m.guias
-      .filter(g => g.checked && g.checkedAt)
-      .map(g => ({
-        ...g,
-        uploadedAt: m.uploadedAt,
-        manifiestoNumero: m.numero,
-      }))
+    m.guias.filter(g => g.checked && g.checkedAt).map(g => ({
+      ...g,
+      uploadedAt: m.uploadedAt,
+      manifiestoNumero: m.numero,
+    }))
   );
 
   const avgPackTime =
     allGuias.length > 0
       ? allGuias.reduce((sum, g) => {
-          const upload = new Date(g.uploadedAt).getTime();
-          const check = new Date(g.checkedAt!).getTime();
-          return sum + (check - upload);
+          const diff = new Date(g.checkedAt!).getTime() - new Date(g.uploadedAt).getTime();
+          return sum + diff;
         }, 0) / allGuias.length
       : 0;
 
@@ -346,39 +396,116 @@ function DashboardTab({
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-4 gap-4">
-        <KpiCard label="Total Guias" value={totalGuias.toString()} />
-        <KpiCard label="Completadas" value={checkedGuias.toString()} color="green" />
-        <KpiCard label="Pendientes" value={(totalGuias - checkedGuias).toString()} color={totalGuias - checkedGuias > 0 ? 'orange' : 'green'} />
-        <KpiCard label="Avance" value={`${pct}%`} color={pct === 100 ? 'green' : 'blue'} />
-      </div>
+      {/* Row 1: Score + Estimated Time + KPI Cards */}
+      <div className="grid grid-cols-12 gap-4">
+        {/* Score Widget */}
+        <div className="col-span-3">
+          {analytics ? (
+            <ScoreWidget score={analytics.score} />
+          ) : (
+            <div className="dashboard-card animate-pulse h-48" />
+          )}
+        </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <KpiCard label="Manifiestos Hoy" value={manifiestos.length.toString()} />
-        <KpiCard label="Pendientes Ayer" value={pending.length.toString()} color={pending.length > 0 ? 'orange' : 'green'} />
-        <KpiCard label="Tiempo Promedio Empaquetado" value={formatDuration(avgPackTime)} color="blue" />
+        {/* Estimated Completion */}
+        <div className="col-span-3">
+          {analytics ? (
+            <EstimatedCompletionWidget
+              estimatedTime={analytics.predictions.estimatedCompletionTime}
+              remainingMinutes={analytics.predictions.estimatedRemainingMinutes}
+              confidence={analytics.predictions.confidence}
+              completionRate={analytics.predictions.completionRate}
+            />
+          ) : (
+            <div className="dashboard-card animate-pulse h-48" />
+          )}
+        </div>
+
+        {/* Quick KPI Cards */}
+        <div className="col-span-6 grid grid-cols-2 gap-4">
+          <KpiCard label="Total Guias" value={totalGuias.toString()} />
+          <KpiCard label="Completadas" value={checkedGuias.toString()} color="green" />
+          <KpiCard label="Pendientes" value={(totalGuias - checkedGuias).toString()} color={totalGuias - checkedGuias > 0 ? 'orange' : 'green'} />
+          <KpiCard label="Tiempo Promedio" value={formatDuration(avgPackTime)} color="blue" />
+        </div>
       </div>
 
       {/* Progress bar */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h3 className="font-mono text-sm font-semibold text-azul mb-4 uppercase tracking-wider">
-          Progreso del dia
-        </h3>
-        <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden mb-2">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              pct === 100 ? 'bg-verde' : 'bg-acento'
-            }`}
-            style={{ width: `${pct}%` }}
+      <div className="dashboard-card">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-mono text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+            Progreso del dia
+          </h3>
+          <span className="font-mono text-xs text-gray-500">{pct}%</span>
+        </div>
+        <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+          <motion.div
+            className={`h-full rounded-full ${pct === 100 ? 'bg-verde' : 'bg-acento'}`}
+            initial={{ width: 0 }}
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.8 }}
           />
         </div>
-        <p className="font-mono text-xs text-gray-500 text-right">{checkedGuias}/{totalGuias} guias confirmadas</p>
+        <div className="flex justify-between mt-2">
+          <span className="font-mono text-[10px] text-gray-400">{checkedGuias} confirmadas</span>
+          <span className="font-mono text-[10px] text-gray-400">{totalGuias - checkedGuias} pendientes</span>
+        </div>
       </div>
 
+      {/* Row 2: Trend Chart + Heatmap */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-7 dashboard-card">
+          <h3 className="font-mono text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Tendencia 30 dias (Completitud % y Score)
+          </h3>
+          {analytics ? (
+            <CompletionTrendChart data={analytics.trendData} />
+          ) : (
+            <div className="h-64 animate-pulse bg-gray-50 rounded-lg" />
+          )}
+        </div>
+        <div className="col-span-5 dashboard-card">
+          <h3 className="font-mono text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Actividad por hora y dia
+          </h3>
+          {analytics ? (
+            <ActivityHeatmap data={analytics.heatmapData} />
+          ) : (
+            <div className="h-48 animate-pulse bg-gray-50 rounded-lg" />
+          )}
+        </div>
+      </div>
+
+      {/* Row 3: Anomalies + Risk + Suggestions */}
+      <div className="grid grid-cols-3 gap-4">
+        {analytics ? (
+          <>
+            <AnomalyAlertWidget anomalies={analytics.anomalies} />
+            <RiskScoreWidget manifiestos={manifiestos} pending={pending} />
+            <SuggestionWidget suggestions={analytics.suggestions} />
+          </>
+        ) : (
+          <>
+            <div className="dashboard-card animate-pulse h-48" />
+            <div className="dashboard-card animate-pulse h-48" />
+            <div className="dashboard-card animate-pulse h-48" />
+          </>
+        )}
+      </div>
+
+      {/* Row 4: Daily Score Bar Chart */}
+      {analytics && analytics.trendData.length > 0 && (
+        <div className="dashboard-card">
+          <h3 className="font-mono text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Score diario (ultimos 14 dias)
+          </h3>
+          <DailyBarChart data={analytics.trendData} />
+        </div>
+      )}
+
       {/* Per-manifest progress */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h3 className="font-mono text-sm font-semibold text-azul mb-4 uppercase tracking-wider">
+      <div className="dashboard-card">
+        <h3 className="font-mono text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
           Detalle por Manifiesto
         </h3>
         <div className="space-y-3">
@@ -392,9 +519,11 @@ function DashboardTab({
                   {m.numero}
                 </span>
                 <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div
+                  <motion.div
                     className={`h-full rounded-full ${p === 100 ? 'bg-verde' : 'bg-acento'}`}
-                    style={{ width: `${p}%` }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${p}%` }}
+                    transition={{ duration: 0.5 }}
                   />
                 </div>
                 <span className="font-mono text-xs text-gray-500 w-16 text-right">
@@ -406,39 +535,41 @@ function DashboardTab({
         </div>
       </div>
 
-      {/* Time log per guia */}
+      {/* KPI Time log */}
       {allGuias.length > 0 && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          <h3 className="font-mono text-sm font-semibold text-azul mb-4 uppercase tracking-wider">
+        <div className="dashboard-card">
+          <h3 className="font-mono text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
             KPI: Tiempo subida &rarr; empaquetado
           </h3>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Manifiesto</th>
-                <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Guia</th>
-                <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Hora Subida</th>
-                <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Hora Check</th>
-                <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Tiempo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allGuias.map((g, i) => {
-                const upload = new Date(g.uploadedAt);
-                const check = new Date(g.checkedAt!);
-                const diff = check.getTime() - upload.getTime();
-                return (
-                  <tr key={i} className="border-b border-gray-50">
-                    <td className="py-2 font-mono">{g.manifiestoNumero}</td>
-                    <td className="py-2 font-mono">{g.numero}</td>
-                    <td className="py-2 font-mono text-gray-500">{upload.toLocaleTimeString('es-AR')}</td>
-                    <td className="py-2 font-mono text-gray-500">{check.toLocaleTimeString('es-AR')}</td>
-                    <td className="py-2 font-mono font-semibold text-acento">{formatDuration(diff)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Manifiesto</th>
+                  <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Guia</th>
+                  <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Hora Subida</th>
+                  <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Hora Check</th>
+                  <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Tiempo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allGuias.map((g, i) => {
+                  const upload = new Date(g.uploadedAt);
+                  const check = new Date(g.checkedAt!);
+                  const diff = check.getTime() - upload.getTime();
+                  return (
+                    <tr key={i} className="border-b border-gray-50">
+                      <td className="py-2 font-mono">{g.manifiestoNumero}</td>
+                      <td className="py-2 font-mono">{g.numero}</td>
+                      <td className="py-2 font-mono text-gray-500">{upload.toLocaleTimeString('es-AR')}</td>
+                      <td className="py-2 font-mono text-gray-500">{check.toLocaleTimeString('es-AR')}</td>
+                      <td className="py-2 font-mono font-semibold text-acento">{formatDuration(diff)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -453,12 +584,16 @@ function KpiCard({ label, value, color }: { label: string; value: string; color?
     red: 'text-rojo',
   };
   return (
-    <div className="bg-white rounded-xl p-5 shadow-sm">
+    <motion.div
+      className="dashboard-card"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+    >
       <div className="font-mono text-[10px] uppercase tracking-wider text-gray-400 mb-1">{label}</div>
       <div className={`font-mono text-2xl font-semibold ${color ? colorClasses[color] || 'text-azul' : 'text-azul'}`}>
         {value}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -477,8 +612,7 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
 
   return (
     <div className="space-y-6">
-      {/* Search */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="dashboard-card">
         <h2 className="font-mono text-lg font-semibold text-azul mb-4">Consultar Tracking Andreani</h2>
         <div className="flex gap-3">
           <input
@@ -499,9 +633,8 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
         </div>
       </div>
 
-      {/* Quick links for all guides */}
       {allGuias.length > 0 && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
+        <div className="dashboard-card">
           <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
             Guias cargadas — Click para consultar
           </h3>
@@ -525,10 +658,8 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
         </div>
       )}
 
-      {/* Tracking result */}
       {selectedGuia && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          {/* Internal flow */}
+        <div className="dashboard-card">
           {allGuias.find(g => g.numero === selectedGuia) && (
             <div className="mb-6">
               <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">
@@ -557,7 +688,6 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             </div>
           )}
 
-          {/* External tracking link + iframe */}
           <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">
             Tracking Andreani
           </h4>
@@ -596,7 +726,12 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
 /* ─── MANIFIESTO ROW ─── */
 function ManifiestoRow({ m, onDelete, isPending }: { m: Manifiesto; onDelete: (id: string, numero: string) => void; isPending?: boolean }) {
   return (
-    <div className={`flex items-center justify-between p-3 rounded-lg ${isPending ? 'bg-amber-50 border border-amber-200' : 'bg-[#f5f7fa]'}`}>
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 5 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`flex items-center justify-between p-3 rounded-lg ${isPending ? 'bg-amber-50 border border-amber-200' : 'bg-[#f5f7fa]'}`}
+    >
       <div>
         <span className="font-mono text-sm font-semibold text-azul">N&ordm; {m.numero}</span>
         <span className="ml-3 text-xs text-gray-500">{m.sucursal}</span>
@@ -617,7 +752,7 @@ function ManifiestoRow({ m, onDelete, isPending }: { m: Manifiesto; onDelete: (i
           X
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -648,18 +783,17 @@ function AuditTab({ auditLog, allManifiestos }: { auditLog: AuditEntry[]; allMan
 
   if (auditLog.length === 0) {
     return (
-      <div className="bg-white rounded-xl p-12 shadow-sm text-center">
+      <div className="dashboard-card text-center py-12">
         <div className="text-4xl mb-3">📝</div>
         <p className="text-gray-500 font-mono text-sm">No hay cambios registrados aun</p>
-        <p className="text-gray-400 font-mono text-xs mt-1">Los cambios aparecen cuando se marcan/desmarcan guias o se eliminan manifiestos</p>
+        <p className="text-gray-400 font-mono text-xs mt-1">Los cambios aparecen cuando se marcan/desmarcan guias</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="dashboard-card">
         <h2 className="font-mono text-lg font-semibold text-azul mb-4">Historial de Cambios</h2>
         <div className="flex gap-4">
           <div>
@@ -694,8 +828,7 @@ function AuditTab({ auditLog, allManifiestos }: { auditLog: AuditEntry[]; allMan
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl p-6 shadow-sm overflow-x-auto">
+      <div className="dashboard-card overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-gray-200">
@@ -734,7 +867,7 @@ function AuditTab({ auditLog, allManifiestos }: { auditLog: AuditEntry[]; allMan
 function HistoryTab({ history }: { history: DayRecord[] }) {
   if (history.length === 0) {
     return (
-      <div className="bg-white rounded-xl p-12 shadow-sm text-center">
+      <div className="dashboard-card text-center py-12">
         <div className="text-4xl mb-3">📋</div>
         <p className="text-gray-500 font-mono text-sm">No hay dias finalizados aun</p>
       </div>
@@ -743,8 +876,14 @@ function HistoryTab({ history }: { history: DayRecord[] }) {
 
   return (
     <div className="space-y-4">
-      {history.map((day, i) => (
-        <div key={i} className="bg-white rounded-xl p-6 shadow-sm">
+      {[...history].reverse().map((day, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.05 }}
+          className="dashboard-card"
+        >
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-mono text-lg font-semibold text-azul">{day.date}</h3>
             <div className="flex items-center gap-4">
@@ -774,7 +913,7 @@ function HistoryTab({ history }: { history: DayRecord[] }) {
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       ))}
     </div>
   );
