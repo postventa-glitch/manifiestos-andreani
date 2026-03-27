@@ -58,16 +58,20 @@ async function loadStore(): Promise<StoreData> {
 
 async function saveStore(data: StoreData): Promise<void> {
   data._version = (data._version || 0) + 1;
+  // Update cache BEFORE writing so polling never sees empty state
+  _cache = data;
+  _cacheTime = Date.now();
   try {
-    const url = await findBlobUrl();
-    if (url) await del(url);
+    // WRITE FIRST, then delete old — never leaves a gap with no blob
+    const oldUrl = await findBlobUrl();
     await put(STORE_KEY, JSON.stringify(data), {
       access: 'public',
       addRandomSuffix: false,
     });
-    // Update cache immediately after write
-    _cache = data;
-    _cacheTime = Date.now();
+    // Only delete old blob AFTER new one is written
+    if (oldUrl) {
+      await del(oldUrl).catch(() => {});
+    }
   } catch (e) {
     console.error('Failed to save store:', e);
   }
