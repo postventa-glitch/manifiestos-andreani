@@ -6,11 +6,14 @@ export function Toaster() {
   return (
     <SonnerToaster
       position="bottom-right"
-      richColors
+      theme="dark"
       toastOptions={{
         style: {
           fontFamily: 'IBM Plex Mono, monospace',
           fontSize: '12px',
+          background: '#18181b',
+          border: '1px solid #27272a',
+          color: '#fafafa',
         },
       }}
     />

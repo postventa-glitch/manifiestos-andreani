@@ -4,35 +4,17 @@ import { motion } from 'framer-motion';
 import type { Suggestion } from '@/lib/types';
 
 export function SuggestionWidget({ suggestions }: { suggestions: Suggestion[] }) {
-  const priorityColors = {
-    high: 'border-red-200 bg-red-50/50',
-    medium: 'border-amber-200 bg-amber-50/50',
-    low: 'border-green-200 bg-green-50/50',
-  };
+  const colors = { high: 'border-[var(--red)]/20 bg-[var(--red)]/5', medium: 'border-[var(--orange)]/20 bg-[var(--orange)]/5', low: 'border-[var(--green)]/20 bg-[var(--green)]/5' };
 
   return (
-    <div className="dashboard-card">
-      <div className="text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-3">
-        Sugerencias IA
-      </div>
-      <div className="space-y-2">
+    <div className="card">
+      <div className="text-[10px] mono uppercase tracking-wider text-[var(--text-tertiary)] mb-3">Sugerencias</div>
+      <div className="space-y-1.5 max-h-36 overflow-y-auto">
         {suggestions.map((s, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className={`p-3 rounded-lg border ${priorityColors[s.priority]}`}
-          >
-            <div className="flex items-start gap-2">
-              <span className="text-base shrink-0">{s.icon}</span>
-              <div>
-                <div className="font-mono text-[11px] font-semibold text-azul">{s.title}</div>
-                <div className="font-mono text-[10px] text-gray-500 mt-0.5 leading-relaxed">
-                  {s.description}
-                </div>
-              </div>
-            </div>
+          <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.1 }}
+            className={`p-2 rounded-lg border ${colors[s.priority]}`}>
+            <div className="text-[11px] font-medium text-[var(--text-primary)]">{s.icon} {s.title}</div>
+            <div className="text-[9px] text-[var(--text-tertiary)] mt-0.5 leading-relaxed">{s.description}</div>
           </motion.div>
         ))}
       </div>
