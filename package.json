@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "pages:build": "npx @cloudflare/next-on-pages",
+    "pages:build": "npx @cloudflare/next-on-pages && echo _worker.js > .vercel/output/static/.assetsignore",
     "start": "next start",
     "preview": "npx wrangler pages dev .vercel/output/static",
     "deploy": "npx wrangler pages deploy .vercel/output/static"
