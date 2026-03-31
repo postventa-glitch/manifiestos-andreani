@@ -1,11 +1,9 @@
 import { Manifiesto, Guia } from './types';
 
 function extractManifestNumber(text: string): string | null {
-  // Try multiple patterns for the manifest number
   const patterns = [
     /N[uú\u00fa]mero:\s*(\d{9,15})/i,
     /mero:\s*(\d{9,15})/i,
-    /Manifiesto de carga\s*N[uú\u00fa]mero:\s*(\d{9,15})/i,
     /Manifiesto de carga[\s\S]{0,30}?(\d{9,15})/i,
   ];
   for (const p of patterns) {
@@ -18,7 +16,6 @@ function extractManifestNumber(text: string): string | null {
 function extractDate(text: string): string {
   const m = text.match(/Fecha:\s*([\d/]+)/i);
   if (m) return m[1];
-  // Fallback: look for dd/mm/yyyy pattern
   const d = text.match(/(\d{2}\/\d{2}\/\d{4})/);
   return d ? d[1] : new Date().toLocaleDateString('es-AR');
 }
@@ -26,21 +23,19 @@ function extractDate(text: string): string {
 function extractGuias(text: string): Guia[] {
   const guias: Guia[] = [];
   const seen = new Set<string>();
-
-  // Pattern 1: with spaces — "01 360002929430380 1"
-  const regex1 = /(\d{1,2})\s+(3600\d{11})\s+(\d+)/g;
   let m;
+
+  // Pattern 1: with spaces — "01 360002931071400 1"
+  const regex1 = /(\d{1,2})\s+(3600\d{11})\s+(\d+)/g;
   while ((m = regex1.exec(text)) !== null) {
     if (!seen.has(m[2])) {
       seen.add(m[2]);
       guias.push({ numero: m[2], paquetes: parseInt(m[3]), checked: false, checkedAt: null });
     }
   }
-
   if (guias.length > 0) return guias;
 
-  // Pattern 2: NO spaces (pdf-parse concatenates columns) — "013600029294303801"
-  // Format: 1-2 digit row number + 15-digit guide (3600...) + 1+ digit package count
+  // Pattern 2: NO spaces — "013600029294303801"
   const regex2 = /(\d{1,2})(3600\d{11})(\d{1,3})/g;
   while ((m = regex2.exec(text)) !== null) {
     if (!seen.has(m[2])) {
@@ -48,7 +43,6 @@ function extractGuias(text: string): Guia[] {
       guias.push({ numero: m[2], paquetes: parseInt(m[3]), checked: false, checkedAt: null });
     }
   }
-
   if (guias.length > 0) return guias;
 
   // Pattern 3: just find all 15-digit numbers starting with 3600
@@ -59,7 +53,6 @@ function extractGuias(text: string): Guia[] {
       guias.push({ numero: m[1], paquetes: 1, checked: false, checkedAt: null });
     }
   }
-
   return guias;
 }
 
@@ -70,20 +63,28 @@ export function parsePdfText(text: string): Manifiesto | null {
 
     const fecha = extractDate(text);
 
-    // Extract branch
-    const sucursalMatch = text.match(/(#\d+[^\n\r]*)/);
-    const sucursal = sucursalMatch ? sucursalMatch[1].trim() : '';
+    // Extract branch — #NNNN followed by name, stop before email/phone/numbers
+    const sucursalMatch = text.match(/(#\d+\s+[A-Za-zÀ-ÿ\s.]+?)(?=\s+[\w.-]+@|\s+\d{10}|\s+N[uú]mero|\s+-\s)/i);
+    const sucursal = sucursalMatch ? sucursalMatch[1].trim() : (() => {
+      // Simpler fallback: just #NNNN + next few words
+      const simple = text.match(/(#\d+\s+\S+(?:\s+\S+){0,4})/);
+      return simple ? simple[1].trim() : '';
+    })();
 
-    // Extract address — line with postal code pattern
-    const addressMatch = text.match(/([^\n\r]+,\s*\d{4}\s+[^\n\r,]+,\s*\w{2})/);
-    const direccion = addressMatch ? addressMatch[1].trim() : sucursal;
+    // Extract address — look for pattern: text, 4-digit postal code, city, 2-letter province
+    const addressMatch = text.match(/([\w\s.]+\d+\s*,\s*,?\s*\d{4}\s+[A-Za-zÀ-ÿ\s]+,\s*\w{2})/);
+    const direccion = addressMatch ? addressMatch[1].trim() : (() => {
+      // Fallback: look for postal code pattern
+      const postalMatch = text.match(/(\d{4}\s+[A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+)?,\s*\w{2})/);
+      return postalMatch ? postalMatch[1].trim() : '';
+    })();
 
     // Extract email
     const emailMatch = text.match(/([\w.-]+@[\w.-]+\.\w+)/);
     const email = emailMatch ? emailMatch[1] : '';
 
-    // Extract phone — exactly 10 digits, not part of a longer number
-    const phoneMatch = text.match(/(?<!\d)(\d{10})(?!\d)/);
+    // Extract phone — exactly 10 digits, not part of a guide number (not starting with 3600)
+    const phoneMatch = text.match(/(?<!\d)((?!3600)\d{10})(?!\d)/);
     const telefono = phoneMatch ? phoneMatch[1] : '';
 
     // Extract guides
