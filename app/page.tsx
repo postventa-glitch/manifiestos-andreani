@@ -135,6 +135,40 @@ export default function PublicPage() {
     processQueue();
   };
 
+  const handleSelectAll = (manifiestoId: string, checked: boolean) => {
+    const now = Date.now();
+    lastLocalChange.current = now;
+
+    // Find the manifest
+    const all = [...manifiestos, ...pending];
+    const manifiesto = all.find(m => m.id === manifiestoId);
+    if (!manifiesto) return;
+
+    // Only toggle guias that need changing
+    const guiasToToggle = manifiesto.guias.filter(g => g.checked !== checked);
+    if (guiasToToggle.length === 0) return;
+
+    // Optimistic update all at once
+    const updateList = (list: Manifiesto[]) =>
+      list.map(m =>
+        m.id === manifiestoId
+          ? { ...m, guias: m.guias.map(g => ({ ...g, checked, checkedAt: checked ? new Date().toISOString() : null })) }
+          : m
+      );
+
+    setManifiestos(prev => updateList(prev));
+    setPending(prev => updateList(prev));
+
+    // Queue each guia change for server
+    for (const g of guiasToToggle) {
+      const key = `${manifiestoId}-${g.numero}`;
+      lastClickTime.current[key] = now;
+      setAuditLog(prev => [...prev, { guiaNumero: g.numero, manifiestoId, action: checked ? 'checked' : 'unchecked', timestamp: new Date().toISOString() }]);
+      checkQueue.current.push({ manifiestoId, guiaNumero: g.numero, checked });
+    }
+    processQueue();
+  };
+
   const handleFinalize = async () => {
     // Wait for queue to drain first
     while (checkQueue.current.length > 0 || isProcessing.current) {
@@ -251,7 +285,7 @@ export default function PublicPage() {
           </div>
         )}
 
-        {pending.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} auditLog={auditLog} isPending />)}
+        {pending.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} isPending />)}
 
         {pending.length > 0 && manifiestos.length > 0 && (
           <div className="bg-azul-claro px-7 py-3">
@@ -259,7 +293,7 @@ export default function PublicPage() {
           </div>
         )}
 
-        {manifiestos.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} auditLog={auditLog} />)}
+        {manifiestos.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} />)}
 
         {/* Finalize + Print */}
         <div className="px-8 py-6 border-t-2 border-dashed border-[#c8d6e8] bg-[#f5f7fa]">
@@ -290,15 +324,18 @@ export default function PublicPage() {
 }
 
 /* ─── MANIFIESTO CARD (checklist) ─── */
-function ManifiestoCard({ manifiesto: m, onCheck, auditLog, isPending }: {
+function ManifiestoCard({ manifiesto: m, onCheck, onSelectAll, auditLog, isPending }: {
   manifiesto: Manifiesto;
   onCheck: (mId: string, gNum: string, checked: boolean) => void;
+  onSelectAll: (mId: string, checked: boolean) => void;
   auditLog: AuditEntry[];
   isPending?: boolean;
 }) {
   const done = m.guias.filter(g => g.checked).length;
   const total = m.guias.length;
   const isComplete = done === total;
+  const allChecked = done === total && total > 0;
+  const noneChecked = done === 0;
 
   return (
     <div className={`border-b-2 border-dashed border-[#c8d6e8] px-8 py-7 last:border-b-0 ${isPending ? 'bg-amber-50/30' : ''}`}>
@@ -335,6 +372,21 @@ function ManifiestoCard({ manifiesto: m, onCheck, auditLog, isPending }: {
           <span className="font-mono text-[10px] uppercase text-[#7a8fab] tracking-wide">Telefono</span>
           <span className="font-semibold">{EMPRESA.telefono}</span>
         </div>
+      </div>
+
+      {/* Select All button */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-mono text-[10px] uppercase tracking-wider text-[#7a8fab]">Guias ({done}/{total})</div>
+        <button
+          onClick={() => onSelectAll(m.id, !allChecked)}
+          className={`px-3 py-1.5 font-mono text-[10px] font-semibold rounded-lg transition-colors ${
+            allChecked
+              ? 'bg-red-50 text-red-600 hover:bg-red-100'
+              : 'bg-green-50 text-green-700 hover:bg-green-100'
+          }`}
+        >
+          {allChecked ? 'Deseleccionar todo' : noneChecked ? 'Seleccionar todo' : `Seleccionar restantes (${total - done})`}
+        </button>
       </div>
 
       {/* Table */}
