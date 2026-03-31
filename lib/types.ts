@@ -45,10 +45,17 @@ export interface TrackingEvent {
 
 export type TrackingStatus = 'pendiente' | 'ingresado' | 'en_camino' | 'en_distribucion' | 'entregado' | 'no_entregado' | 'devuelto' | 'desconocido';
 
+export interface TimelineStep {
+  label: string;
+  date: string | null;
+  done: boolean;
+}
+
 export interface GuiaTracking {
   guiaNumero: string;
   status: TrackingStatus;
   statusText: string;
   lastChecked: string;
   empresa?: string;
+  timeline?: TimelineStep[];
 }

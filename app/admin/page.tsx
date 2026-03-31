@@ -39,12 +39,19 @@ interface DayRecord {
   completedGuias: number;
 }
 
+interface TimelineStep {
+  label: string;
+  date: string | null;
+  done: boolean;
+}
+
 interface GuiaTracking {
   guiaNumero: string;
   status: string;
   statusText: string;
   lastChecked: string;
   empresa?: string;
+  timeline?: TimelineStep[];
 }
 
 type Tab = 'upload' | 'dashboard' | 'tracking' | 'entregas' | 'audit' | 'history';
@@ -530,18 +537,71 @@ function KpiCard({ label, value, color }: { label: string; value: string; color?
 }
 
 /* ─── TRACKING TAB ─── */
+// Client-side HTML parser for Andreani tracking
+function parseAndreaniHTML(html: string, guia: string): Omit<GuiaTracking, 'lastChecked'> {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const text = doc.body?.innerText || html;
+
+  const statusOrder = ['Pendiente de ingreso', 'Ingresado', 'En camino', 'En sucursal', 'Entregado'];
+  const statusMap: Record<string, string> = {
+    'Pendiente de ingreso': 'pendiente',
+    'Ingresado': 'ingresado',
+    'En camino': 'en_camino',
+    'En sucursal': 'en_camino',
+    'Entregado': 'entregado',
+    'No entregado': 'no_entregado',
+    'Devuelto': 'devuelto',
+  };
+
+  // Build timeline
+  const timeline: TimelineStep[] = [];
+  let mainStatus = 'desconocido';
+  let mainStatusText = 'Desconocido';
+
+  for (const label of statusOrder) {
+    const idx = text.indexOf(label);
+    if (idx > -1) {
+      const after = text.substring(idx + label.length, idx + label.length + 30);
+      const dateMatch = after.match(/(\d{2}-\d{2}-\d{4})/);
+      timeline.push({ label, date: dateMatch?.[1] || null, done: dateMatch !== null });
+    } else {
+      timeline.push({ label, date: null, done: false });
+    }
+  }
+
+  // Main status: find the primary heading (appears before the timeline)
+  const mainMatch = text.match(/(No entregado|Devuelto|Entregado|En distribuci[oó]n|En camino|En sucursal|Ingresado|Pendiente de ingreso)/);
+  if (mainMatch) {
+    mainStatusText = mainMatch[1];
+    mainStatus = statusMap[mainMatch[1]] || 'desconocido';
+  }
+
+  // Empresa
+  const empresaMatch = text.match(/(?:envío|Envío|envio) de\s+([A-Z\s.]+?(?:S\.?A\.?|S\.?R\.?L\.?|S\.?A\.?S\.?|INC\.?))/i);
+
+  return {
+    guiaNumero: guia,
+    status: mainStatus as any,
+    statusText: mainStatusText,
+    empresa: empresaMatch?.[1]?.trim(),
+    timeline,
+  };
+}
+
 function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
   const [selectedGuia, setSelectedGuia] = useState('');
   const [customGuia, setCustomGuia] = useState('');
   const [trackingData, setTrackingData] = useState<Record<string, GuiaTracking>>({});
   const [loadingGuia, setLoadingGuia] = useState('');
   const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState('');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const allGuias = allManifiestos.flatMap(m =>
     m.guias.map(g => ({ ...g, manifiestoNumero: m.numero, manifiestoId: m.id, uploadedAt: m.uploadedAt }))
   );
 
-  // Load saved tracking data on mount
   useEffect(() => {
     fetch('/api/tracking?all=1').then(r => r.json()).then(data => {
       const map: Record<string, GuiaTracking> = {};
@@ -550,38 +610,48 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
     }).catch(() => {});
   }, []);
 
+  // Scrape a single guia via proxy + DOMParser
+  const scrapeGuia = async (guia: string): Promise<GuiaTracking | null> => {
+    try {
+      const res = await fetch(`/api/tracking?proxy=1&guia=${guia}`);
+      const html = await res.text();
+      if (!html || html.length < 100) return null;
+      const parsed = parseAndreaniHTML(html, guia);
+      const tracking: GuiaTracking = { ...parsed, lastChecked: new Date().toISOString() };
+      // Save to server
+      await fetch('/api/tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tracking),
+      });
+      return tracking;
+    } catch {
+      return null;
+    }
+  };
+
   const fetchTracking = async (guia: string) => {
     setLoadingGuia(guia);
-    try {
-      const res = await fetch(`/api/tracking?guia=${guia}`);
-      const data = await res.json();
-      setTrackingData(prev => ({ ...prev, [guia]: { guiaNumero: guia, status: data.status, statusText: data.statusText, lastChecked: new Date().toISOString(), empresa: data.empresa } }));
-    } catch {}
+    const result = await scrapeGuia(guia);
+    if (result) {
+      setTrackingData(prev => ({ ...prev, [guia]: result }));
+    }
     setLoadingGuia('');
   };
 
   const scanAll = async () => {
     setScanning(true);
     const nums = allGuias.map(g => g.numero);
-    // Batch 10 at a time
-    for (let i = 0; i < nums.length; i += 10) {
-      const batch = nums.slice(i, i + 10);
-      try {
-        const res = await fetch('/api/tracking', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ guias: batch }),
-        });
-        const data = await res.json();
-        if (data.results) {
-          setTrackingData(prev => {
-            const next = { ...prev };
-            data.results.forEach((t: GuiaTracking) => { next[t.guiaNumero] = t; });
-            return next;
-          });
-        }
-      } catch {}
+    for (let i = 0; i < nums.length; i++) {
+      setScanProgress(`${i + 1}/${nums.length}`);
+      const result = await scrapeGuia(nums[i]);
+      if (result) {
+        setTrackingData(prev => ({ ...prev, [nums[i]]: result }));
+      }
+      // Small delay to avoid rate limiting
+      if (i < nums.length - 1) await new Promise(r => setTimeout(r, 500));
     }
+    setScanProgress('');
     setScanning(false);
   };
 
@@ -604,16 +674,6 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
     }
   };
 
-  const statusDot = (status: string) => {
-    switch (status) {
-      case 'entregado': return 'bg-green-500';
-      case 'en_camino': case 'en_distribucion': return 'bg-blue-500';
-      case 'ingresado': return 'bg-cyan-500';
-      case 'no_entregado': case 'devuelto': return 'bg-red-500';
-      default: return 'bg-gray-300';
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Search + Scan */}
@@ -626,22 +686,13 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
               disabled={scanning}
               className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
-              {scanning ? 'Escaneando...' : `Escanear todas (${allGuias.length})`}
+              {scanning ? `Escaneando ${scanProgress}...` : `Escanear todas (${allGuias.length})`}
             </button>
           )}
         </div>
         <div className="flex gap-3">
-          <input
-            type="text"
-            value={customGuia}
-            onChange={e => setCustomGuia(e.target.value)}
-            placeholder="Numero de guia..."
-            className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg font-mono text-sm focus:outline-none focus:border-acento"
-            onKeyDown={e => e.key === 'Enter' && customGuia && handleSelect(customGuia)}
-          />
-          <button onClick={() => handleSelect(customGuia)} disabled={!customGuia} className="px-6 py-2.5 bg-acento text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
-            Buscar
-          </button>
+          <input type="text" value={customGuia} onChange={e => setCustomGuia(e.target.value)} placeholder="Numero de guia..." className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg font-mono text-sm focus:outline-none focus:border-acento" onKeyDown={e => e.key === 'Enter' && customGuia && handleSelect(customGuia)} />
+          <button onClick={() => handleSelect(customGuia)} disabled={!customGuia} className="px-6 py-2.5 bg-acento text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">Buscar</button>
         </div>
       </div>
 
@@ -653,13 +704,7 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             {allGuias.map(g => {
               const t = trackingData[g.numero];
               return (
-                <button
-                  key={g.numero}
-                  onClick={() => handleSelect(g.numero)}
-                  className={`px-3 py-1.5 font-mono text-xs rounded-lg border transition-colors ${
-                    selectedGuia === g.numero ? 'bg-acento border-acento text-white' : t ? statusColor(t.status) : g.checked ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-acento'
-                  }`}
-                >
+                <button key={g.numero} onClick={() => handleSelect(g.numero)} className={`px-3 py-1.5 font-mono text-xs rounded-lg border transition-colors ${selectedGuia === g.numero ? 'bg-acento border-acento text-white' : t ? statusColor(t.status) : g.checked ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-acento'}`}>
                   {g.numero}
                   {t && t.status !== 'desconocido' && <span className="ml-1.5 text-[9px] opacity-75">({t.statusText})</span>}
                 </button>
@@ -669,34 +714,42 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
         </div>
       )}
 
-      {/* Tracking flow for selected guia */}
+      {/* Tracking flow */}
       {selectedGuia && (
         <div className="bg-white rounded-xl p-6 shadow-sm">
           {allGuias.find(g => g.numero === selectedGuia) && (() => {
             const g = allGuias.find(x => x.numero === selectedGuia)!;
             const t = trackingData[selectedGuia];
+            const tl = t?.timeline || [];
+            const getTimelineDate = (label: string) => tl.find(s => s.label === label)?.date || null;
+            const isTimelineDone = (label: string) => tl.find(s => s.label === label)?.done || false;
+
             const steps = [
-              { label: 'Carga de manifiesto', time: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true, color: 'bg-green-50 border-green-200' },
-              { label: 'Checklist (empaquetado)', time: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked, color: g.checked ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'En camino', time: t && ['en_camino', 'en_distribucion', 'entregado'].includes(t.status) ? t.statusText : 'Pendiente', done: t ? ['en_camino', 'en_distribucion', 'entregado'].includes(t.status) : false, color: t && ['en_camino', 'en_distribucion'].includes(t.status) ? 'bg-blue-50 border-blue-200' : t?.status === 'entregado' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'Entregado', time: t?.status === 'entregado' ? 'Confirmado' : t?.status === 'no_entregado' ? 'No entregado' : 'Pendiente', done: t?.status === 'entregado', color: t?.status === 'entregado' ? 'bg-green-50 border-green-200' : t?.status === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Carga manifiesto', sub: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true, dotColor: 'bg-green-500', bgColor: 'bg-green-50 border-green-200' },
+              { label: 'Empaquetado', sub: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked, dotColor: g.checked ? 'bg-green-500' : 'bg-gray-300', bgColor: g.checked ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Ingresado', sub: getTimelineDate('Ingresado') || (isTimelineDone('Ingresado') ? 'Si' : 'Pendiente'), done: isTimelineDone('Ingresado'), dotColor: isTimelineDone('Ingresado') ? 'bg-cyan-500' : 'bg-gray-300', bgColor: isTimelineDone('Ingresado') ? 'bg-cyan-50 border-cyan-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'En camino', sub: getTimelineDate('En camino') || (isTimelineDone('En camino') ? 'Si' : 'Pendiente'), done: isTimelineDone('En camino'), dotColor: isTimelineDone('En camino') ? 'bg-blue-500' : 'bg-gray-300', bgColor: isTimelineDone('En camino') ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Entregado', sub: getTimelineDate('Entregado') || (t?.status === 'entregado' ? 'Confirmado' : t?.status === 'no_entregado' ? 'No entregado' : 'Pendiente'), done: t?.status === 'entregado', dotColor: t?.status === 'entregado' ? 'bg-green-500' : t?.status === 'no_entregado' ? 'bg-red-500' : 'bg-gray-300', bgColor: t?.status === 'entregado' ? 'bg-green-50 border-green-200' : t?.status === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
             ];
+
             return (
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="font-mono text-xs font-semibold text-azul uppercase tracking-wider">Flujo completo — {selectedGuia}</h4>
                   <button onClick={() => fetchTracking(selectedGuia)} disabled={loadingGuia === selectedGuia} className="font-mono text-[10px] text-acento hover:underline disabled:opacity-50">
-                    {loadingGuia === selectedGuia ? 'Actualizando...' : 'Actualizar estado'}
+                    {loadingGuia === selectedGuia ? 'Consultando Andreani...' : 'Actualizar estado'}
                   </button>
                 </div>
-                <div className="grid grid-cols-4 gap-3 mb-4">
+                {/* Flow boxes */}
+                <div className="grid grid-cols-5 gap-2 mb-4">
                   {steps.map((s, i) => (
-                    <div key={i} className={`p-3 rounded-lg border ${s.color}`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className={`w-2.5 h-2.5 rounded-full ${s.done ? statusDot(i === 3 ? (t?.status || '') : i === 2 ? 'en_camino' : 'entregado') : 'bg-gray-300'}`} />
-                        <span className="font-mono text-[11px] font-semibold">{s.label}</span>
+                    <div key={i} className={`p-3 rounded-lg border ${s.bgColor} relative`}>
+                      {i > 0 && <div className="absolute -left-2 top-1/2 -translate-y-1/2 text-gray-300 text-xs">&rarr;</div>}
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${s.dotColor}`} />
+                        <span className="font-mono text-[10px] font-semibold leading-tight">{s.label}</span>
                       </div>
-                      <span className="font-mono text-[10px] text-gray-500">{s.time}</span>
+                      <span className="font-mono text-[9px] text-gray-500">{s.sub}</span>
                     </div>
                   ))}
                 </div>
@@ -710,18 +763,14 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             );
           })()}
 
-          {/* Andreani links */}
+          {/* Andreani embed */}
           <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">Tracking Andreani</h4>
           <div className="flex gap-2 mb-4">
-            <a href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-              Abrir en Andreani.com &rarr;
-            </a>
-            <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors">
-              Link alternativo &rarr;
-            </a>
+            <a href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Abrir en Andreani.com &rarr;</a>
+            <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors">Link alternativo &rarr;</a>
           </div>
           <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: '500px' }}>
-            <iframe src={trackingUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups" title={`Tracking ${selectedGuia}`} />
+            <iframe ref={iframeRef} src={trackingUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups" title={`Tracking ${selectedGuia}`} />
           </div>
         </div>
       )}
