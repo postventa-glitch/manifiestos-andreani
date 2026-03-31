@@ -720,10 +720,6 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             const g = allGuias.find(x => x.numero === selectedGuia)!;
             const t = trackingData[selectedGuia];
             const tl = t?.timeline || [];
-            const getTimelineDate = (label: string) => tl.find(s => s.label === label)?.date || null;
-            const isTimelineDone = (label: string) => tl.find(s => s.label === label)?.done || false;
-
-            const tl = t?.timeline || [];
             const tlStep = (label: string) => tl.find(s => s.label === label);
 
             const steps = [
