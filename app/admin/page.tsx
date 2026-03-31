@@ -39,7 +39,15 @@ interface DayRecord {
   completedGuias: number;
 }
 
-type Tab = 'upload' | 'dashboard' | 'tracking' | 'audit' | 'history';
+interface GuiaTracking {
+  guiaNumero: string;
+  status: string;
+  statusText: string;
+  lastChecked: string;
+  empresa?: string;
+}
+
+type Tab = 'upload' | 'dashboard' | 'tracking' | 'entregas' | 'audit' | 'history';
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('upload');
@@ -184,6 +192,7 @@ export default function AdminPage() {
     { key: 'upload', label: 'Subir Manifiestos' },
     { key: 'dashboard', label: 'Dashboard' },
     { key: 'tracking', label: 'Tracking' },
+    { key: 'entregas', label: 'Entregas' },
     { key: 'audit', label: 'Cambios' },
     { key: 'history', label: 'Historial' },
   ];
@@ -252,6 +261,7 @@ export default function AdminPage() {
           />
         )}
         {tab === 'tracking' && <TrackingTab allManifiestos={allManifiestos} />}
+        {tab === 'entregas' && <EntregasTab allManifiestos={allManifiestos} />}
         {tab === 'audit' && <AuditTab auditLog={auditLog} allManifiestos={allManifiestos} />}
         {tab === 'history' && <HistoryTab history={history} />}
       </div>
@@ -523,20 +533,103 @@ function KpiCard({ label, value, color }: { label: string; value: string; color?
 function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
   const [selectedGuia, setSelectedGuia] = useState('');
   const [customGuia, setCustomGuia] = useState('');
+  const [trackingData, setTrackingData] = useState<Record<string, GuiaTracking>>({});
+  const [loadingGuia, setLoadingGuia] = useState('');
+  const [scanning, setScanning] = useState(false);
 
   const allGuias = allManifiestos.flatMap(m =>
     m.guias.map(g => ({ ...g, manifiestoNumero: m.numero, manifiestoId: m.id, uploadedAt: m.uploadedAt }))
   );
 
-  const trackingUrl = selectedGuia
-    ? `https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`
-    : '';
+  // Load saved tracking data on mount
+  useEffect(() => {
+    fetch('/api/tracking?all=1').then(r => r.json()).then(data => {
+      const map: Record<string, GuiaTracking> = {};
+      (data.trackings || []).forEach((t: GuiaTracking) => { map[t.guiaNumero] = t; });
+      setTrackingData(map);
+    }).catch(() => {});
+  }, []);
+
+  const fetchTracking = async (guia: string) => {
+    setLoadingGuia(guia);
+    try {
+      const res = await fetch(`/api/tracking?guia=${guia}`);
+      const data = await res.json();
+      setTrackingData(prev => ({ ...prev, [guia]: { guiaNumero: guia, status: data.status, statusText: data.statusText, lastChecked: new Date().toISOString(), empresa: data.empresa } }));
+    } catch {}
+    setLoadingGuia('');
+  };
+
+  const scanAll = async () => {
+    setScanning(true);
+    const nums = allGuias.map(g => g.numero);
+    // Batch 10 at a time
+    for (let i = 0; i < nums.length; i += 10) {
+      const batch = nums.slice(i, i + 10);
+      try {
+        const res = await fetch('/api/tracking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ guias: batch }),
+        });
+        const data = await res.json();
+        if (data.results) {
+          setTrackingData(prev => {
+            const next = { ...prev };
+            data.results.forEach((t: GuiaTracking) => { next[t.guiaNumero] = t; });
+            return next;
+          });
+        }
+      } catch {}
+    }
+    setScanning(false);
+  };
+
+  const handleSelect = (guia: string) => {
+    setSelectedGuia(guia);
+    setCustomGuia(guia);
+    fetchTracking(guia);
+  };
+
+  const trackingUrl = selectedGuia ? `https://www.andreani.com/#!/informacionEnvio/${selectedGuia}` : '';
+
+  const statusColor = (status: string) => {
+    switch (status) {
+      case 'entregado': return 'bg-green-50 border-green-200 text-green-700';
+      case 'en_camino': case 'en_distribucion': return 'bg-blue-50 border-blue-200 text-blue-700';
+      case 'ingresado': return 'bg-cyan-50 border-cyan-200 text-cyan-700';
+      case 'pendiente': return 'bg-gray-50 border-gray-200 text-gray-500';
+      case 'no_entregado': case 'devuelto': return 'bg-red-50 border-red-200 text-red-700';
+      default: return 'bg-gray-50 border-gray-200 text-gray-400';
+    }
+  };
+
+  const statusDot = (status: string) => {
+    switch (status) {
+      case 'entregado': return 'bg-green-500';
+      case 'en_camino': case 'en_distribucion': return 'bg-blue-500';
+      case 'ingresado': return 'bg-cyan-500';
+      case 'no_entregado': case 'devuelto': return 'bg-red-500';
+      default: return 'bg-gray-300';
+    }
+  };
 
   return (
     <div className="space-y-6">
-      {/* Search */}
+      {/* Search + Scan */}
       <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h2 className="font-mono text-lg font-semibold text-azul mb-4">Consultar Tracking Andreani</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-mono text-lg font-semibold text-azul">Consultar Tracking Andreani</h2>
+          {allGuias.length > 0 && (
+            <button
+              onClick={scanAll}
+              disabled={scanning}
+              className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              {scanning ? 'Escaneando...' : `Escanear todas (${allGuias.length})`}
+            </button>
+          )}
+        </div>
         <div className="flex gap-3">
           <input
             type="text"
@@ -544,108 +637,221 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             onChange={e => setCustomGuia(e.target.value)}
             placeholder="Numero de guia..."
             className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg font-mono text-sm focus:outline-none focus:border-acento"
-            onKeyDown={e => e.key === 'Enter' && customGuia && setSelectedGuia(customGuia)}
+            onKeyDown={e => e.key === 'Enter' && customGuia && handleSelect(customGuia)}
           />
-          <button
-            onClick={() => setSelectedGuia(customGuia)}
-            disabled={!customGuia}
-            className="px-6 py-2.5 bg-acento text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
+          <button onClick={() => handleSelect(customGuia)} disabled={!customGuia} className="px-6 py-2.5 bg-acento text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
             Buscar
           </button>
         </div>
       </div>
 
-      {/* Quick links for all guides */}
+      {/* Quick links with status */}
       {allGuias.length > 0 && (
         <div className="bg-white rounded-xl p-6 shadow-sm">
-          <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
-            Guias cargadas — Click para consultar
-          </h3>
+          <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">Guias — Click para ver estado</h3>
           <div className="flex flex-wrap gap-2">
-            {allGuias.map(g => (
-              <button
-                key={g.numero}
-                onClick={() => { setSelectedGuia(g.numero); setCustomGuia(g.numero); }}
-                className={`px-3 py-1.5 font-mono text-xs rounded-lg border transition-colors ${
-                  selectedGuia === g.numero
-                    ? 'bg-acento border-acento text-white'
-                    : g.checked
-                    ? 'bg-green-50 border-green-200 text-green-700'
-                    : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-acento hover:text-acento'
-                }`}
-              >
-                {g.numero}
-              </button>
-            ))}
+            {allGuias.map(g => {
+              const t = trackingData[g.numero];
+              return (
+                <button
+                  key={g.numero}
+                  onClick={() => handleSelect(g.numero)}
+                  className={`px-3 py-1.5 font-mono text-xs rounded-lg border transition-colors ${
+                    selectedGuia === g.numero ? 'bg-acento border-acento text-white' : t ? statusColor(t.status) : g.checked ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-700 hover:border-acento'
+                  }`}
+                >
+                  {g.numero}
+                  {t && t.status !== 'desconocido' && <span className="ml-1.5 text-[9px] opacity-75">({t.statusText})</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Tracking result */}
+      {/* Tracking flow for selected guia */}
       {selectedGuia && (
         <div className="bg-white rounded-xl p-6 shadow-sm">
-          {/* Internal flow */}
-          {allGuias.find(g => g.numero === selectedGuia) && (
-            <div className="mb-6">
-              <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">
-                Flujo interno — {selectedGuia}
-              </h4>
-              {(() => {
-                const g = allGuias.find(x => x.numero === selectedGuia)!;
-                const steps = [
-                  { label: 'Carga de manifiesto', time: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true },
-                  { label: 'Checklist (empaquetado)', time: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked },
-                ];
-                return (
-                  <div className="flex gap-4 mb-4">
-                    {steps.map((s, i) => (
-                      <div key={i} className={`flex-1 p-3 rounded-lg border ${s.done ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className={`w-2.5 h-2.5 rounded-full ${s.done ? 'bg-verde' : 'bg-gray-300'}`} />
-                          <span className="font-mono text-xs font-semibold">{s.label}</span>
-                        </div>
-                        <span className="font-mono text-[10px] text-gray-500">{s.time}</span>
+          {allGuias.find(g => g.numero === selectedGuia) && (() => {
+            const g = allGuias.find(x => x.numero === selectedGuia)!;
+            const t = trackingData[selectedGuia];
+            const steps = [
+              { label: 'Carga de manifiesto', time: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true, color: 'bg-green-50 border-green-200' },
+              { label: 'Checklist (empaquetado)', time: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked, color: g.checked ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'En camino', time: t && ['en_camino', 'en_distribucion', 'entregado'].includes(t.status) ? t.statusText : 'Pendiente', done: t ? ['en_camino', 'en_distribucion', 'entregado'].includes(t.status) : false, color: t && ['en_camino', 'en_distribucion'].includes(t.status) ? 'bg-blue-50 border-blue-200' : t?.status === 'entregado' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Entregado', time: t?.status === 'entregado' ? 'Confirmado' : t?.status === 'no_entregado' ? 'No entregado' : 'Pendiente', done: t?.status === 'entregado', color: t?.status === 'entregado' ? 'bg-green-50 border-green-200' : t?.status === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
+            ];
+            return (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-mono text-xs font-semibold text-azul uppercase tracking-wider">Flujo completo — {selectedGuia}</h4>
+                  <button onClick={() => fetchTracking(selectedGuia)} disabled={loadingGuia === selectedGuia} className="font-mono text-[10px] text-acento hover:underline disabled:opacity-50">
+                    {loadingGuia === selectedGuia ? 'Actualizando...' : 'Actualizar estado'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-3 mb-4">
+                  {steps.map((s, i) => (
+                    <div key={i} className={`p-3 rounded-lg border ${s.color}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className={`w-2.5 h-2.5 rounded-full ${s.done ? statusDot(i === 3 ? (t?.status || '') : i === 2 ? 'en_camino' : 'entregado') : 'bg-gray-300'}`} />
+                        <span className="font-mono text-[11px] font-semibold">{s.label}</span>
                       </div>
-                    ))}
+                      <span className="font-mono text-[10px] text-gray-500">{s.time}</span>
+                    </div>
+                  ))}
+                </div>
+                {t && (
+                  <div className="font-mono text-[10px] text-gray-400">
+                    Ultima consulta: {new Date(t.lastChecked).toLocaleString('es-AR')}
+                    {t.empresa && <span className="ml-3">Empresa: {t.empresa}</span>}
                   </div>
-                );
-              })()}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
-          {/* External tracking link + iframe */}
-          <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">
-            Tracking Andreani
-          </h4>
+          {/* Andreani links */}
+          <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">Tracking Andreani</h4>
           <div className="flex gap-2 mb-4">
-            <a
-              href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors"
-            >
+            <a href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
               Abrir en Andreani.com &rarr;
             </a>
-            <a
-              href={`https://www.andreani.com/envio/${selectedGuia}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors"
-            >
+            <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors">
               Link alternativo &rarr;
             </a>
           </div>
           <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: '500px' }}>
-            <iframe
-              src={trackingUrl}
-              className="w-full h-full"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-              title={`Tracking ${selectedGuia}`}
-            />
+            <iframe src={trackingUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups" title={`Tracking ${selectedGuia}`} />
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ─── ENTREGAS TAB ─── */
+function EntregasTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
+  const [trackingData, setTrackingData] = useState<GuiaTracking[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const allGuias = allManifiestos.flatMap(m =>
+    m.guias.map(g => ({ ...g, manifiestoNumero: m.numero, uploadedAt: m.uploadedAt }))
+  );
+
+  useEffect(() => {
+    fetch('/api/tracking?all=1').then(r => r.json()).then(data => {
+      setTrackingData(data.trackings || []);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const trackingMap = new Map(trackingData.map(t => [t.guiaNumero, t]));
+
+  const entregados = allGuias.filter(g => trackingMap.get(g.numero)?.status === 'entregado');
+  const enCamino = allGuias.filter(g => {
+    const t = trackingMap.get(g.numero);
+    return t && ['en_camino', 'en_distribucion', 'ingresado'].includes(t.status);
+  });
+  const demorados = allGuias.filter(g => {
+    const t = trackingMap.get(g.numero);
+    // Demorado: checked (empaquetado) hace mas de 48hs y no entregado
+    if (!g.checked || !g.checkedAt) return false;
+    const checkedDate = new Date(g.checkedAt);
+    const hoursAgo = (Date.now() - checkedDate.getTime()) / (1000 * 60 * 60);
+    if (hoursAgo < 48) return false;
+    if (t?.status === 'entregado') return false;
+    return true;
+  });
+  const noEntregados = allGuias.filter(g => {
+    const t = trackingMap.get(g.numero);
+    return t && ['no_entregado', 'devuelto'].includes(t.status);
+  });
+  const sinEstado = allGuias.filter(g => !trackingMap.has(g.numero));
+
+  if (loading) {
+    return <div className="bg-white rounded-xl p-12 shadow-sm text-center font-mono text-sm text-gray-500 animate-pulse">Cargando datos de entregas...</div>;
+  }
+
+  const Section = ({ title, items, color, icon }: { title: string; items: typeof allGuias; color: string; icon: string }) => (
+    <div className="bg-white rounded-xl p-6 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-mono text-sm font-semibold uppercase tracking-wider flex items-center gap-2">
+          <span>{icon}</span>
+          <span className={color}>{title}</span>
+          <span className="text-gray-400 font-normal">({items.length})</span>
+        </h3>
+      </div>
+      {items.length === 0 ? (
+        <p className="font-mono text-xs text-gray-400">Sin guias en esta categoria</p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-gray-200">
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Guia</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Manifiesto</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Estado Andreani</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Empaquetado</th>
+              <th className="py-2 text-left font-mono text-[10px] text-gray-500 uppercase">Ult. Consulta</th>
+              <th className="py-2 text-center font-mono text-[10px] text-gray-500 uppercase w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(g => {
+              const t = trackingMap.get(g.numero);
+              return (
+                <tr key={g.numero} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="py-2 font-mono">{g.numero}</td>
+                  <td className="py-2 font-mono text-gray-500">{g.manifiestoNumero}</td>
+                  <td className="py-2">
+                    <span className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] font-semibold ${
+                      t?.status === 'entregado' ? 'bg-green-100 text-green-800' :
+                      t?.status === 'en_camino' || t?.status === 'en_distribucion' ? 'bg-blue-100 text-blue-800' :
+                      t?.status === 'no_entregado' || t?.status === 'devuelto' ? 'bg-red-100 text-red-800' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {t?.statusText || 'Sin consultar'}
+                    </span>
+                  </td>
+                  <td className="py-2 font-mono text-[10px] text-gray-500">
+                    {g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                  </td>
+                  <td className="py-2 font-mono text-[10px] text-gray-400">
+                    {t?.lastChecked ? new Date(t.lastChecked).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                  </td>
+                  <td className="py-2 text-center">
+                    <a href={`https://www.andreani.com/#!/informacionEnvio/${g.numero}`} target="_blank" rel="noopener noreferrer" className="text-acento hover:underline font-mono text-[10px]">Ver</a>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Summary KPIs */}
+      <div className="grid grid-cols-5 gap-4">
+        {[
+          { label: 'Entregados', count: entregados.length, color: 'text-green-700', bg: 'bg-green-50' },
+          { label: 'En camino', count: enCamino.length, color: 'text-blue-700', bg: 'bg-blue-50' },
+          { label: 'Demorados', count: demorados.length, color: 'text-amber-700', bg: 'bg-amber-50' },
+          { label: 'No entregados', count: noEntregados.length, color: 'text-red-700', bg: 'bg-red-50' },
+          { label: 'Sin estado', count: sinEstado.length, color: 'text-gray-500', bg: 'bg-gray-50' },
+        ].map(k => (
+          <div key={k.label} className={`${k.bg} rounded-xl p-4 text-center`}>
+            <div className={`font-mono text-2xl font-bold ${k.color}`}>{k.count}</div>
+            <div className="font-mono text-[10px] text-gray-500 uppercase tracking-wider mt-1">{k.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <Section title="Entregados" items={entregados} color="text-green-700" icon="&#x2705;" />
+      <Section title="En camino" items={enCamino} color="text-blue-700" icon="&#x1F69A;" />
+      <Section title="Demorados (+48hs)" items={demorados} color="text-amber-700" icon="&#x26A0;" />
+      <Section title="No entregados / Devueltos" items={noEntregados} color="text-red-700" icon="&#x274C;" />
+      {sinEstado.length > 0 && <Section title="Sin estado consultado" items={sinEstado} color="text-gray-500" icon="&#x2753;" />}
     </div>
   );
 }

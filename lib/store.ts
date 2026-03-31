@@ -1,4 +1,4 @@
-import { Manifiesto, DayRecord, AuditEntry } from './types';
+import { Manifiesto, DayRecord, AuditEntry, GuiaTracking } from './types';
 
 const DATA_KEY = 'manifiestos-data';
 
@@ -176,4 +176,40 @@ export async function storePdf(kv: KVNamespace, fileName: string, base64Data: st
 
 export async function getPdf(kv: KVNamespace, fileName: string): Promise<string | null> {
   return await kv.get(`pdf:${fileName}`, 'text');
+}
+
+// ── Tracking Storage ──
+
+export async function saveTracking(kv: KVNamespace, tracking: GuiaTracking): Promise<void> {
+  const all = await getAllTracking(kv);
+  const idx = all.findIndex(t => t.guiaNumero === tracking.guiaNumero);
+  if (idx >= 0) {
+    all[idx] = tracking;
+  } else {
+    all.push(tracking);
+  }
+  await kv.put('tracking-data', JSON.stringify(all));
+}
+
+export async function getAllTracking(kv: KVNamespace): Promise<GuiaTracking[]> {
+  try {
+    const raw = await kv.get('tracking-data', 'text');
+    if (!raw) return [];
+    return JSON.parse(raw) as GuiaTracking[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveBulkTracking(kv: KVNamespace, trackings: GuiaTracking[]): Promise<void> {
+  const all = await getAllTracking(kv);
+  for (const t of trackings) {
+    const idx = all.findIndex(x => x.guiaNumero === t.guiaNumero);
+    if (idx >= 0) {
+      all[idx] = t;
+    } else {
+      all.push(t);
+    }
+  }
+  await kv.put('tracking-data', JSON.stringify(all));
 }

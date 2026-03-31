@@ -42,3 +42,13 @@ export interface TrackingEvent {
   detalle: string;
   sucursal: string;
 }
+
+export type TrackingStatus = 'pendiente' | 'ingresado' | 'en_camino' | 'en_distribucion' | 'entregado' | 'no_entregado' | 'devuelto' | 'desconocido';
+
+export interface GuiaTracking {
+  guiaNumero: string;
+  status: TrackingStatus;
+  statusText: string;
+  lastChecked: string;
+  empresa?: string;
+}
