@@ -38,19 +38,45 @@ export default function PublicPage() {
   const [showAudit, setShowAudit] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeResult, setFinalizeResult] = useState<string | null>(null);
-  const pendingChecks = useRef<Set<string>>(new Set());
   const lastVersion = useRef<number>(0);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Sequential queue: checks run one at a time to avoid KV race conditions
+  const checkQueue = useRef<Array<{ manifiestoId: string; guiaNumero: string; checked: boolean }>>([]);
+  const isProcessing = useRef(false);
 
-  // Sync with server — only updates if no pending local changes
+  const processQueue = useCallback(async () => {
+    if (isProcessing.current || checkQueue.current.length === 0) return;
+    isProcessing.current = true;
+
+    while (checkQueue.current.length > 0) {
+      const op = checkQueue.current.shift()!;
+      try {
+        const res = await fetch('/api/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(op),
+        });
+        const data = await res.json();
+        lastVersion.current = data._version || lastVersion.current;
+      } catch {
+        // silent — optimistic state is already shown
+      }
+    }
+
+    isProcessing.current = false;
+    // After all queued writes done, schedule a full sync
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(syncFromServer, 1500);
+  }, []);
+
+  // Sync with server — only when queue is empty
   const syncFromServer = useCallback(async () => {
-    if (pendingChecks.current.size > 0) return;
+    if (checkQueue.current.length > 0 || isProcessing.current) return;
     try {
       const res = await fetch('/api/manifiestos');
       const data = await res.json();
       const serverVersion = data._version || 0;
-      // Only accept server data when we have no pending ops
-      if (pendingChecks.current.size === 0 && serverVersion >= lastVersion.current) {
+      if (checkQueue.current.length === 0 && !isProcessing.current && serverVersion >= lastVersion.current) {
         setManifiestos(data.manifiestos || []);
         setPending(data.pending || []);
         setAuditLog(data.auditLog || []);
@@ -63,14 +89,6 @@ export default function PublicPage() {
     }
   }, []);
 
-  // Schedule a delayed sync (debounced) — waits for rapid clicks to finish
-  const scheduleSyncAfterWrite = useCallback(() => {
-    if (syncTimer.current) clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
-      syncFromServer();
-    }, 2000); // sync 2s after last write
-  }, [syncFromServer]);
-
   useEffect(() => {
     syncFromServer();
     const interval = setInterval(syncFromServer, 5000);
@@ -78,10 +96,7 @@ export default function PublicPage() {
   }, [syncFromServer]);
 
   const handleCheck = (manifiestoId: string, guiaNumero: string, checked: boolean) => {
-    const key = `${manifiestoId}-${guiaNumero}`;
-    pendingChecks.current.add(key);
-
-    // INSTANT optimistic update — no await, no blocking
+    // INSTANT optimistic update
     const updateList = (list: Manifiesto[]) =>
       list.map(m =>
         m.id === manifiestoId
@@ -103,21 +118,9 @@ export default function PublicPage() {
       { guiaNumero, manifiestoId, action: checked ? 'checked' : 'unchecked', timestamp: new Date().toISOString() },
     ]);
 
-    // Fire-and-forget POST to server — don't await, don't block UI
-    fetch('/api/check', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ manifiestoId, guiaNumero, checked }),
-    })
-      .then(res => res.json())
-      .then(data => {
-        lastVersion.current = data._version || lastVersion.current;
-      })
-      .catch(() => {})
-      .finally(() => {
-        pendingChecks.current.delete(key);
-        scheduleSyncAfterWrite();
-      });
+    // Add to sequential queue — processes one at a time
+    checkQueue.current.push({ manifiestoId, guiaNumero, checked });
+    processQueue();
   };
 
   const handleFinalize = async () => {
