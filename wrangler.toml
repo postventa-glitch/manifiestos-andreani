@@ -5,4 +5,4 @@ pages_build_output_dir = ".vercel/output/static"
 
 [[kv_namespaces]]
 binding = "MANIFIESTOS_KV"
-id = "TBD"
+id = "c06b75fcc56846df850fb93469495452"
