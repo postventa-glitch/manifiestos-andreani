@@ -2,40 +2,45 @@ export const runtime = 'edge';
 
 import { NextResponse } from 'next/server';
 
-export async function GET() {
+export async function GET(request: Request) {
   const results: Record<string, any> = { timestamp: new Date().toISOString() };
 
-  // Test 1: getRequestContext
+  // Test 1: getRequestContext (Pages-style)
   try {
-    const mod = require('@cloudflare/next-on-pages');
-    const ctx = mod.getRequestContext();
-    results.method1_keys = Object.keys(ctx?.env || {});
-    results.method1_hasKV = !!(ctx?.env as any)?.MANIFIESTOS_KV;
-    if (results.method1_hasKV) {
-      const kv = (ctx.env as any).MANIFIESTOS_KV;
-      const data = await kv.get('manifiestos-data', 'text');
-      results.method1_kv = data ? `data size: ${data.length}` : 'empty';
-    }
+    const { getRequestContext } = await import('@cloudflare/next-on-pages');
+    const ctx = getRequestContext();
+    results.m1_keys = Object.keys(ctx?.env || {});
+    results.m1_hasKV = !!(ctx?.env as any)?.MANIFIESTOS_KV;
   } catch (e: any) {
-    results.method1_error = e.message;
+    results.m1_err = e.message?.substring(0, 200);
   }
 
   // Test 2: process.env
   try {
-    const kv = (process.env as any).MANIFIESTOS_KV;
-    results.method2_type = typeof kv;
-    results.method2_hasGet = kv && typeof kv.get === 'function';
+    results.m2_keys = Object.keys(process.env).filter(k => k.includes('MANIF') || k.includes('KV'));
+    results.m2_type = typeof (process.env as any).MANIFIESTOS_KV;
   } catch (e: any) {
-    results.method2_error = e.message;
+    results.m2_err = e.message?.substring(0, 100);
   }
 
   // Test 3: globalThis
   try {
-    const kv = (globalThis as any).MANIFIESTOS_KV;
-    results.method3_type = typeof kv;
-    results.method3_hasGet = kv && typeof kv.get === 'function';
+    results.m3_type = typeof (globalThis as any).MANIFIESTOS_KV;
+    results.m3_envType = typeof (globalThis as any).__env__;
+    if ((globalThis as any).__env__) {
+      results.m3_envKeys = Object.keys((globalThis as any).__env__);
+    }
   } catch (e: any) {
-    results.method3_error = e.message;
+    results.m3_err = e.message?.substring(0, 100);
+  }
+
+  // Test 4: Check if there's a cf context on the request
+  try {
+    const cf = (request as any).cf;
+    results.m4_hasCf = !!cf;
+    results.m4_cfKeys = cf ? Object.keys(cf).slice(0, 5) : [];
+  } catch (e: any) {
+    results.m4_err = e.message?.substring(0, 100);
   }
 
   return NextResponse.json(results);
