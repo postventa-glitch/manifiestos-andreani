@@ -90,19 +90,65 @@ export default function AdminPage() {
     setUploadResults([]);
 
     const form = e.currentTarget;
-    const formData = new FormData(form);
+    const fileInput = form.querySelector('input[type="file"]') as HTMLInputElement;
+    const files = fileInput?.files;
+
+    if (!files || files.length === 0) {
+      setUploadResults([{ success: false, error: 'No se seleccionaron archivos' }]);
+      setUploading(false);
+      return;
+    }
 
     try {
+      // Extract text client-side using pdf.js from CDN
+      const pdfjsLib = await loadPdfJs();
+      const formData = new FormData();
+
+      for (const file of Array.from(files)) {
+        const arrayBuffer = await file.arrayBuffer();
+        try {
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          let fullText = '';
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const page = await pdf.getPage(p);
+            const content = await page.getTextContent();
+            const pageText = content.items.map((item: any) => item.str).join(' ');
+            fullText += pageText + '\n';
+          }
+          formData.append('texts', fullText);
+          formData.append('pdfs', file);
+        } catch {
+          // If pdf.js fails, send file without text — server will try fallback
+          formData.append('pdfs', file);
+        }
+      }
+
       const res = await fetch('/api/manifiestos', { method: 'POST', body: formData });
       const data = await res.json();
       setUploadResults(data.results || []);
       setManifiestos(data.manifiestos || []);
       form.reset();
-    } catch {
-      setUploadResults([{ success: false, error: 'Error de conexion' }]);
+    } catch (err) {
+      setUploadResults([{ success: false, error: 'Error: ' + String(err) }]);
     } finally {
       setUploading(false);
     }
+  };
+
+  // Lazy-load pdf.js from CDN
+  const loadPdfJs = async () => {
+    if ((window as any).__pdfjsLib) return (window as any).__pdfjsLib;
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    document.head.appendChild(script);
+    await new Promise<void>((resolve, reject) => {
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load pdf.js'));
+    });
+    const lib = (window as any).pdfjsLib;
+    lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    (window as any).__pdfjsLib = lib;
+    return lib;
   };
 
   const handleDelete = async (manifiestoId: string, numero: string) => {
