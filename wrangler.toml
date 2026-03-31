@@ -5,7 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = ".vercel/output/static"
-binding = "ASSETS"
 
 [[kv_namespaces]]
 binding = "MANIFIESTOS_KV"
