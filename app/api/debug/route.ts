@@ -3,36 +3,40 @@ export const runtime = 'edge';
 import { NextResponse } from 'next/server';
 
 export async function GET() {
+  const results: Record<string, any> = { timestamp: new Date().toISOString() };
+
+  // Test 1: getRequestContext
   try {
-    // Try to get bindings
-    let kvInfo = 'not tested';
-    let envKeys: string[] = [];
-    let ctxError = '';
-
-    try {
-      const { getRequestContext } = await import('@cloudflare/next-on-pages');
-      const ctx = getRequestContext();
-      envKeys = Object.keys(ctx.env || {});
+    const mod = require('@cloudflare/next-on-pages');
+    const ctx = mod.getRequestContext();
+    results.method1_keys = Object.keys(ctx?.env || {});
+    results.method1_hasKV = !!(ctx?.env as any)?.MANIFIESTOS_KV;
+    if (results.method1_hasKV) {
       const kv = (ctx.env as any).MANIFIESTOS_KV;
-      if (kv) {
-        const testRead = await kv.get('manifiestos-data', 'text');
-        kvInfo = testRead ? `connected, data size: ${testRead.length}` : 'connected, no data';
-      } else {
-        kvInfo = 'binding not found';
-      }
-    } catch (e: any) {
-      ctxError = e.message;
-      kvInfo = 'context error';
+      const data = await kv.get('manifiestos-data', 'text');
+      results.method1_kv = data ? `data size: ${data.length}` : 'empty';
     }
-
-    return NextResponse.json({
-      status: 'ok',
-      kvInfo,
-      envKeys,
-      ctxError,
-      timestamp: new Date().toISOString(),
-    });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message, stack: e.stack?.substring(0, 500) }, { status: 500 });
+    results.method1_error = e.message;
   }
+
+  // Test 2: process.env
+  try {
+    const kv = (process.env as any).MANIFIESTOS_KV;
+    results.method2_type = typeof kv;
+    results.method2_hasGet = kv && typeof kv.get === 'function';
+  } catch (e: any) {
+    results.method2_error = e.message;
+  }
+
+  // Test 3: globalThis
+  try {
+    const kv = (globalThis as any).MANIFIESTOS_KV;
+    results.method3_type = typeof kv;
+    results.method3_hasGet = kv && typeof kv.get === 'function';
+  } catch (e: any) {
+    results.method3_error = e.message;
+  }
+
+  return NextResponse.json(results);
 }

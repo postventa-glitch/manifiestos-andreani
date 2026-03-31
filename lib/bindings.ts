@@ -1,22 +1,27 @@
-import { getRequestContext } from '@cloudflare/next-on-pages';
-
 export function getKV(): KVNamespace {
+  // Method 1: @cloudflare/next-on-pages context (Pages deployment)
   try {
+    const { getRequestContext } = require('@cloudflare/next-on-pages');
     const ctx = getRequestContext();
-    const kv = (ctx.env as any).MANIFIESTOS_KV;
-    if (!kv) {
-      throw new Error('MANIFIESTOS_KV binding not found in env. Available: ' + Object.keys(ctx.env || {}).join(', '));
+    if (ctx?.env?.MANIFIESTOS_KV) {
+      return ctx.env.MANIFIESTOS_KV as KVNamespace;
     }
-    return kv as KVNamespace;
-  } catch (e: any) {
-    // Fallback: try global scope (Workers runtime)
-    const globalKV = (globalThis as any).MANIFIESTOS_KV;
-    if (globalKV) return globalKV as KVNamespace;
+  } catch {}
 
-    // Fallback: try process.env (shouldn't work but try)
-    const processKV = (process as any).env?.MANIFIESTOS_KV;
-    if (processKV) return processKV as KVNamespace;
+  // Method 2: process.env (Workers deployment with nodejs_compat)
+  try {
+    const kv = (process.env as any).MANIFIESTOS_KV;
+    if (kv && typeof kv.get === 'function') return kv as KVNamespace;
+  } catch {}
 
-    throw new Error('KV binding not available: ' + e.message);
-  }
+  // Method 3: globalThis (Workers global bindings)
+  try {
+    const kv = (globalThis as any).MANIFIESTOS_KV;
+    if (kv && typeof kv.get === 'function') return kv as KVNamespace;
+  } catch {}
+
+  // Method 4: Try dynamic import
+  throw new Error(
+    'MANIFIESTOS_KV not found. Tried: getRequestContext, process.env, globalThis'
+  );
 }
