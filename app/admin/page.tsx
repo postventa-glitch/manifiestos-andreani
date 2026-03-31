@@ -724,12 +724,19 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             const getTimelineDate = (label: string) => tl.find(s => s.label === label)?.date || null;
             const isTimelineDone = (label: string) => tl.find(s => s.label === label)?.done || false;
 
+            // Determine step completion from stored status
+            const st = t?.status || 'desconocido';
+            const stReached = (target: string[]) => target.includes(st);
+            const ingresadoDone = stReached(['ingresado', 'en_camino', 'en_distribucion', 'entregado', 'no_entregado']);
+            const enCaminoDone = stReached(['en_camino', 'en_distribucion', 'entregado', 'no_entregado']);
+            const entregadoDone = st === 'entregado';
+
             const steps = [
               { label: 'Carga manifiesto', sub: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true, dotColor: 'bg-green-500', bgColor: 'bg-green-50 border-green-200' },
               { label: 'Empaquetado', sub: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked, dotColor: g.checked ? 'bg-green-500' : 'bg-gray-300', bgColor: g.checked ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'Ingresado', sub: getTimelineDate('Ingresado') || (isTimelineDone('Ingresado') ? 'Si' : 'Pendiente'), done: isTimelineDone('Ingresado'), dotColor: isTimelineDone('Ingresado') ? 'bg-cyan-500' : 'bg-gray-300', bgColor: isTimelineDone('Ingresado') ? 'bg-cyan-50 border-cyan-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'En camino', sub: getTimelineDate('En camino') || (isTimelineDone('En camino') ? 'Si' : 'Pendiente'), done: isTimelineDone('En camino'), dotColor: isTimelineDone('En camino') ? 'bg-blue-500' : 'bg-gray-300', bgColor: isTimelineDone('En camino') ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'Entregado', sub: getTimelineDate('Entregado') || (t?.status === 'entregado' ? 'Confirmado' : t?.status === 'no_entregado' ? 'No entregado' : 'Pendiente'), done: t?.status === 'entregado', dotColor: t?.status === 'entregado' ? 'bg-green-500' : t?.status === 'no_entregado' ? 'bg-red-500' : 'bg-gray-300', bgColor: t?.status === 'entregado' ? 'bg-green-50 border-green-200' : t?.status === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Ingresado', sub: getTimelineDate('Ingresado') || (ingresadoDone ? 'Si' : 'Pendiente'), done: ingresadoDone, dotColor: ingresadoDone ? 'bg-cyan-500' : 'bg-gray-300', bgColor: ingresadoDone ? 'bg-cyan-50 border-cyan-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'En camino', sub: getTimelineDate('En camino') || (enCaminoDone ? t?.statusText || 'Si' : 'Pendiente'), done: enCaminoDone, dotColor: enCaminoDone ? 'bg-blue-500' : 'bg-gray-300', bgColor: enCaminoDone ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Entregado', sub: getTimelineDate('Entregado') || (entregadoDone ? 'Confirmado' : st === 'no_entregado' ? 'No entregado' : 'Pendiente'), done: entregadoDone, dotColor: entregadoDone ? 'bg-green-500' : st === 'no_entregado' ? 'bg-red-500' : 'bg-gray-300', bgColor: entregadoDone ? 'bg-green-50 border-green-200' : st === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
             ];
 
             return (
@@ -762,6 +769,47 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
               </div>
             );
           })()}
+
+          {/* Manual status setter */}
+          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-mono text-xs font-semibold text-amber-800 uppercase tracking-wider mb-1">Setear estado desde Andreani</h4>
+                <p className="font-mono text-[10px] text-amber-600">Verifica el estado en el iframe de abajo y selecciona el estado actual</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value=""
+                  onChange={async (e) => {
+                    const val = e.target.value;
+                    if (!val) return;
+                    const statusMap: Record<string, { status: string; text: string }> = {
+                      pendiente: { status: 'pendiente', text: 'Pendiente de ingreso' },
+                      ingresado: { status: 'ingresado', text: 'Ingresado' },
+                      en_camino: { status: 'en_camino', text: 'En camino' },
+                      en_sucursal: { status: 'en_camino', text: 'En sucursal' },
+                      entregado: { status: 'entregado', text: 'Entregado' },
+                      no_entregado: { status: 'no_entregado', text: 'No entregado' },
+                    };
+                    const s = statusMap[val];
+                    if (!s) return;
+                    const tracking = { guiaNumero: selectedGuia, status: s.status, statusText: s.text };
+                    await fetch('/api/tracking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tracking) });
+                    setTrackingData(prev => ({ ...prev, [selectedGuia]: { ...tracking, lastChecked: new Date().toISOString() } }));
+                  }}
+                  className="px-3 py-2 border border-amber-300 rounded-lg font-mono text-xs bg-white focus:outline-none focus:border-acento"
+                >
+                  <option value="">Seleccionar estado...</option>
+                  <option value="pendiente">Pendiente de ingreso</option>
+                  <option value="ingresado">Ingresado</option>
+                  <option value="en_camino">En camino</option>
+                  <option value="en_sucursal">En sucursal</option>
+                  <option value="entregado">Entregado</option>
+                  <option value="no_entregado">No entregado</option>
+                </select>
+              </div>
+            </div>
+          </div>
 
           {/* Andreani embed */}
           <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">Tracking Andreani</h4>
