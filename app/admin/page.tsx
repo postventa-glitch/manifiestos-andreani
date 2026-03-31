@@ -21,6 +21,7 @@ interface Manifiesto {
   pesoTotal: string;
   totalPaquetes: number;
   uploadedAt: string;
+  zona?: 'puerto_madryn' | 'buenos_aires';
 }
 
 interface AuditEntry {
@@ -99,7 +100,7 @@ export default function AdminPage() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const handleUpload = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleUpload = async (e: React.FormEvent<HTMLFormElement>, zona: string) => {
     e.preventDefault();
     setUploading(true);
     setUploadResults([]);
@@ -118,6 +119,7 @@ export default function AdminPage() {
       // Extract text client-side using pdf.js from CDN
       const pdfjsLib = await loadPdfJs();
       const formData = new FormData();
+      formData.append('zona', zona);
 
       for (const file of Array.from(files)) {
         const arrayBuffer = await file.arrayBuffer();
@@ -289,86 +291,111 @@ function UploadTab({
   uploadResults: any[];
   manifiestos: Manifiesto[];
   pending: Manifiesto[];
-  onUpload: (e: React.FormEvent<HTMLFormElement>) => void;
+  onUpload: (e: React.FormEvent<HTMLFormElement>, zona: string) => void;
   onDelete: (id: string, numero: string) => void;
 }) {
+  const pmManifiestos = manifiestos.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
+  const baManifiestos = manifiestos.filter(m => m.zona === 'buenos_aires');
+  const pmPending = pending.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
+  const baPending = pending.filter(m => m.zona === 'buenos_aires');
+
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h2 className="font-mono text-lg font-semibold text-azul mb-4">Subir PDFs de Manifiestos</h2>
-        <form onSubmit={onUpload} className="space-y-4">
-          <div className="border-2 border-dashed border-azul-claro rounded-lg p-8 text-center hover:border-acento transition-colors">
-            <input
-              type="file"
-              name="pdfs"
-              multiple
-              accept=".pdf"
-              className="block mx-auto text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-azul file:text-white hover:file:bg-azul-medio cursor-pointer"
-            />
-            <p className="mt-2 text-xs text-gray-400 font-mono">Se pueden subir varios PDFs a la vez</p>
-          </div>
-          <button
-            type="submit"
-            disabled={uploading}
-            className="w-full py-3 bg-acento text-white font-mono font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {uploading ? 'Procesando...' : 'Subir y Procesar PDFs'}
-          </button>
-        </form>
-
-        {uploadResults.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {uploadResults.map((r, i) => (
-              <div
-                key={i}
-                className={`p-3 rounded-lg font-mono text-sm ${
-                  r.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
-                }`}
-              >
-                {r.success
-                  ? `Manifiesto ${r.numero} — ${r.guias} guias cargadas`
-                  : `Error: ${r.error} ${r.file ? `(${r.file})` : ''}`}
-                {!r.success && r.debug && (
-                  <details className="mt-2">
-                    <summary className="cursor-pointer text-xs opacity-70">Ver texto raw del PDF (debug)</summary>
-                    <pre className="mt-1 text-[10px] bg-red-100 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap">{r.debug}</pre>
-                  </details>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Current manifests */}
-      {(manifiestos.length > 0 || pending.length > 0) && (
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          {pending.length > 0 && (
-            <>
-              <h3 className="font-mono text-sm font-semibold text-amber-700 mb-3 uppercase tracking-wider">
-                Pendientes del dia anterior ({pending.length})
-              </h3>
-              <div className="space-y-3 mb-5">
-                {pending.map(m => (
-                  <ManifiestoRow key={m.id} m={m} onDelete={onDelete} isPending />
-                ))}
-              </div>
-            </>
-          )}
-          {manifiestos.length > 0 && (
-            <>
-              <h3 className="font-mono text-sm font-semibold text-azul mb-3 uppercase tracking-wider">
-                Manifiestos cargados hoy ({manifiestos.length})
-              </h3>
-              <div className="space-y-3">
-                {manifiestos.map(m => (
-                  <ManifiestoRow key={m.id} m={m} onDelete={onDelete} />
-                ))}
-              </div>
-            </>
-          )}
+      {/* Upload results */}
+      {uploadResults.length > 0 && (
+        <div className="space-y-2">
+          {uploadResults.map((r: any, i: number) => (
+            <div key={i} className={`p-3 rounded-lg font-mono text-sm ${r.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              {r.success ? `Manifiesto ${r.numero} — ${r.guias} guias cargadas` : `Error: ${r.error} ${r.file ? `(${r.file})` : ''}`}
+              {!r.success && r.debug && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs opacity-70">Ver texto raw del PDF (debug)</summary>
+                  <pre className="mt-1 text-[10px] bg-red-100 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap">{r.debug}</pre>
+                </details>
+              )}
+            </div>
+          ))}
         </div>
       )}
+
+      {/* Two-column layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* PUERTO MADRYN */}
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl p-6 shadow-sm border-t-4 border-blue-500">
+            <h2 className="font-mono text-lg font-semibold text-azul mb-1 flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-blue-500 inline-block"></span>
+              Puerto Madryn
+            </h2>
+            <p className="font-mono text-[10px] text-gray-400 mb-4 uppercase tracking-wider">Manifiestos sucursal Madryn</p>
+            <form onSubmit={(e) => onUpload(e, 'puerto_madryn')} className="space-y-3">
+              <div className="border-2 border-dashed border-blue-200 rounded-lg p-6 text-center hover:border-blue-400 transition-colors bg-blue-50/30">
+                <input type="file" name="pdfs" multiple accept=".pdf" className="block mx-auto text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer" />
+                <p className="mt-2 text-xs text-gray-400 font-mono">PDFs de Puerto Madryn</p>
+              </div>
+              <button type="submit" disabled={uploading} className="w-full py-2.5 bg-blue-600 text-white font-mono text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                {uploading ? 'Procesando...' : 'Subir Madryn'}
+              </button>
+            </form>
+          </div>
+
+          {/* PM manifests */}
+          {(pmManifiestos.length > 0 || pmPending.length > 0) && (
+            <div className="bg-white rounded-xl p-5 shadow-sm">
+              {pmPending.length > 0 && (
+                <>
+                  <h3 className="font-mono text-[10px] font-semibold text-amber-700 mb-2 uppercase tracking-wider">Pendientes ({pmPending.length})</h3>
+                  <div className="space-y-2 mb-4">{pmPending.map(m => <ManifiestoRow key={m.id} m={m} onDelete={onDelete} isPending />)}</div>
+                </>
+              )}
+              {pmManifiestos.length > 0 && (
+                <>
+                  <h3 className="font-mono text-[10px] font-semibold text-blue-700 mb-2 uppercase tracking-wider">Hoy ({pmManifiestos.length})</h3>
+                  <div className="space-y-2">{pmManifiestos.map(m => <ManifiestoRow key={m.id} m={m} onDelete={onDelete} />)}</div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* BUENOS AIRES */}
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl p-6 shadow-sm border-t-4 border-emerald-500">
+            <h2 className="font-mono text-lg font-semibold text-azul mb-1 flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+              Buenos Aires
+            </h2>
+            <p className="font-mono text-[10px] text-gray-400 mb-4 uppercase tracking-wider">Manifiestos sucursal Buenos Aires</p>
+            <form onSubmit={(e) => onUpload(e, 'buenos_aires')} className="space-y-3">
+              <div className="border-2 border-dashed border-emerald-200 rounded-lg p-6 text-center hover:border-emerald-400 transition-colors bg-emerald-50/30">
+                <input type="file" name="pdfs" multiple accept=".pdf" className="block mx-auto text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer" />
+                <p className="mt-2 text-xs text-gray-400 font-mono">PDFs de Buenos Aires</p>
+              </div>
+              <button type="submit" disabled={uploading} className="w-full py-2.5 bg-emerald-600 text-white font-mono text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+                {uploading ? 'Procesando...' : 'Subir Buenos Aires'}
+              </button>
+            </form>
+          </div>
+
+          {/* BA manifests */}
+          {(baManifiestos.length > 0 || baPending.length > 0) && (
+            <div className="bg-white rounded-xl p-5 shadow-sm">
+              {baPending.length > 0 && (
+                <>
+                  <h3 className="font-mono text-[10px] font-semibold text-amber-700 mb-2 uppercase tracking-wider">Pendientes ({baPending.length})</h3>
+                  <div className="space-y-2 mb-4">{baPending.map(m => <ManifiestoRow key={m.id} m={m} onDelete={onDelete} isPending />)}</div>
+                </>
+              )}
+              {baManifiestos.length > 0 && (
+                <>
+                  <h3 className="font-mono text-[10px] font-semibold text-emerald-700 mb-2 uppercase tracking-wider">Hoy ({baManifiestos.length})</h3>
+                  <div className="space-y-2">{baManifiestos.map(m => <ManifiestoRow key={m.id} m={m} onDelete={onDelete} />)}</div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

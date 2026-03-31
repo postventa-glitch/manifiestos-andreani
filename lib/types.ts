@@ -13,6 +13,8 @@ export interface AuditEntry {
   detail?: string;
 }
 
+export type Zona = 'puerto_madryn' | 'buenos_aires';
+
 export interface Manifiesto {
   id: string;
   numero: string;
@@ -25,6 +27,7 @@ export interface Manifiesto {
   pesoTotal: string;
   totalPaquetes: number;
   uploadedAt: string;
+  zona?: Zona;
 }
 
 export interface DayRecord {

@@ -28,6 +28,7 @@ interface Manifiesto {
   pesoTotal: string;
   totalPaquetes: number;
   uploadedAt: string;
+  zona?: 'puerto_madryn' | 'buenos_aires';
 }
 
 // Fixed company info
@@ -279,21 +280,44 @@ export default function PublicPage() {
 
       {/* Container */}
       <div className="max-w-[860px] mx-auto bg-white rounded-b-xl overflow-hidden shadow-[0_8px_40px_rgba(26,46,90,0.12)]">
-        {pending.length > 0 && (
-          <div className="bg-amber-50 border-b-2 border-amber-200 px-7 py-3">
-            <span className="font-mono text-xs font-semibold text-amber-700 tracking-wider uppercase">Pendientes del dia anterior</span>
-          </div>
-        )}
+        {(() => {
+          const pmPending = pending.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
+          const baPending = pending.filter(m => m.zona === 'buenos_aires');
+          const pmToday = manifiestos.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
+          const baToday = manifiestos.filter(m => m.zona === 'buenos_aires');
+          const pmAll = [...pmPending, ...pmToday];
+          const baAll = [...baPending, ...baToday];
 
-        {pending.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} isPending />)}
+          return (
+            <>
+              {/* Puerto Madryn section */}
+              {pmAll.length > 0 && (
+                <>
+                  <div className="bg-blue-50 border-b-2 border-blue-200 px-7 py-3 flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
+                    <span className="font-mono text-xs font-semibold text-blue-800 tracking-wider uppercase">Puerto Madryn</span>
+                    <span className="font-mono text-[10px] text-blue-500 ml-auto">{pmAll.reduce((s, m) => s + m.guias.filter(g => g.checked).length, 0)}/{pmAll.reduce((s, m) => s + m.guias.length, 0)} guias</span>
+                  </div>
+                  {pmPending.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} isPending />)}
+                  {pmToday.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} />)}
+                </>
+              )}
 
-        {pending.length > 0 && manifiestos.length > 0 && (
-          <div className="bg-azul-claro px-7 py-3">
-            <span className="font-mono text-xs font-semibold text-azul tracking-wider uppercase">Manifiestos de hoy</span>
-          </div>
-        )}
-
-        {manifiestos.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} />)}
+              {/* Buenos Aires section */}
+              {baAll.length > 0 && (
+                <>
+                  <div className="bg-emerald-50 border-b-2 border-emerald-200 px-7 py-3 flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
+                    <span className="font-mono text-xs font-semibold text-emerald-800 tracking-wider uppercase">Buenos Aires</span>
+                    <span className="font-mono text-[10px] text-emerald-500 ml-auto">{baAll.reduce((s, m) => s + m.guias.filter(g => g.checked).length, 0)}/{baAll.reduce((s, m) => s + m.guias.length, 0)} guias</span>
+                  </div>
+                  {baPending.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} isPending />)}
+                  {baToday.map(m => <ManifiestoCard key={m.id} manifiesto={m} onCheck={handleCheck} onSelectAll={handleSelectAll} auditLog={auditLog} />)}
+                </>
+              )}
+            </>
+          );
+        })()}
 
         {/* Finalize + Print */}
         <div className="px-8 py-6 border-t-2 border-dashed border-[#c8d6e8] bg-[#f5f7fa]">

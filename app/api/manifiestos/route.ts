@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
     // Check if text was already extracted client-side
     const extractedTexts = formData.getAll('texts') as string[];
     const files = formData.getAll('pdfs') as File[];
+    const zona = (formData.get('zona') as string) || 'puerto_madryn';
 
     if ((!files || files.length === 0) && (!extractedTexts || extractedTexts.length === 0)) {
       return NextResponse.json({ error: 'No se subieron archivos' }, { status: 400 });
@@ -34,6 +35,7 @@ export async function POST(request: NextRequest) {
         const manifiesto = parsePdfText(text);
 
         if (manifiesto) {
+          manifiesto.zona = zona as any;
           await addManifiesto(kv, manifiesto);
           // Store PDF binary in KV if file provided
           if (file) {
@@ -59,6 +61,7 @@ export async function POST(request: NextRequest) {
         const manifiesto = parsePdfText(text);
 
         if (manifiesto) {
+          manifiesto.zona = zona as any;
           await addManifiesto(kv, manifiesto);
           const base64 = arrayBufferToBase64(arrayBuf);
           await storePdf(kv, `${manifiesto.numero}_${Date.now()}.pdf`, base64);
