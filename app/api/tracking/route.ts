@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
     stored: stored || null,
     status: 'desconocido',
     statusText: 'No encontrado en envia.com',
-    trackingUrl: `https://www.andreani.com/#!/informacionEnvio/${guia}`,
+    trackingUrl: `https://envia.com/tracking?label=${guia}`,
   });
 }
 

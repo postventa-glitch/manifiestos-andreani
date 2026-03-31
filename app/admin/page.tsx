@@ -660,7 +660,7 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
     fetchTracking(guia);
   };
 
-  const trackingUrl = selectedGuia ? `https://www.andreani.com/#!/informacionEnvio/${selectedGuia}` : '';
+  const trackingUrl = selectedGuia ? `https://envia.com/tracking?label=${selectedGuia}` : '';
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -805,14 +805,14 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             </div>
           </div>
 
-          {/* Andreani embed */}
+          {/* Tracking embed via envia.com */}
           <h4 className="font-mono text-xs font-semibold text-azul mb-3 uppercase tracking-wider">Tracking Andreani</h4>
           <div className="flex gap-2 mb-4">
-            <a href={`https://www.andreani.com/#!/informacionEnvio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Abrir en Andreani.com &rarr;</a>
-            <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors">Link alternativo &rarr;</a>
+            <a href={`https://envia.com/tracking?label=${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-acento text-white font-mono text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Abrir en Envia.com &rarr;</a>
+            <a href={`https://www.andreani.com/envio/${selectedGuia}`} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-gray-100 text-gray-700 font-mono text-xs font-semibold rounded-lg hover:bg-gray-200 transition-colors">Andreani directo &rarr;</a>
           </div>
           <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: '500px' }}>
-            <iframe ref={iframeRef} src={trackingUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups" title={`Tracking ${selectedGuia}`} />
+            <iframe ref={iframeRef} src={trackingUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" title={`Tracking ${selectedGuia}`} />
           </div>
         </div>
       )}
@@ -909,7 +909,7 @@ function EntregasTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
                     {t?.lastChecked ? new Date(t.lastChecked).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
                   </td>
                   <td className="py-2 text-center">
-                    <a href={`https://www.andreani.com/#!/informacionEnvio/${g.numero}`} target="_blank" rel="noopener noreferrer" className="text-acento hover:underline font-mono text-[10px]">Ver</a>
+                    <a href={`https://envia.com/tracking?label=${g.numero}`} target="_blank" rel="noopener noreferrer" className="text-acento hover:underline font-mono text-[10px]">Ver</a>
                   </td>
                 </tr>
               );
