@@ -770,44 +770,43 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             );
           })()}
 
-          {/* Manual status setter */}
+          {/* Quick status buttons */}
           <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-mono text-xs font-semibold text-amber-800 uppercase tracking-wider mb-1">Setear estado desde Andreani</h4>
-                <p className="font-mono text-[10px] text-amber-600">Verifica el estado en el iframe de abajo y selecciona el estado actual</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value=""
-                  onChange={async (e) => {
-                    const val = e.target.value;
-                    if (!val) return;
-                    const statusMap: Record<string, { status: string; text: string }> = {
-                      pendiente: { status: 'pendiente', text: 'Pendiente de ingreso' },
-                      ingresado: { status: 'ingresado', text: 'Ingresado' },
-                      en_camino: { status: 'en_camino', text: 'En camino' },
-                      en_sucursal: { status: 'en_camino', text: 'En sucursal' },
-                      entregado: { status: 'entregado', text: 'Entregado' },
-                      no_entregado: { status: 'no_entregado', text: 'No entregado' },
-                    };
-                    const s = statusMap[val];
-                    if (!s) return;
-                    const tracking = { guiaNumero: selectedGuia, status: s.status, statusText: s.text };
-                    await fetch('/api/tracking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tracking) });
-                    setTrackingData(prev => ({ ...prev, [selectedGuia]: { ...tracking, lastChecked: new Date().toISOString() } }));
-                  }}
-                  className="px-3 py-2 border border-amber-300 rounded-lg font-mono text-xs bg-white focus:outline-none focus:border-acento"
-                >
-                  <option value="">Seleccionar estado...</option>
-                  <option value="pendiente">Pendiente de ingreso</option>
-                  <option value="ingresado">Ingresado</option>
-                  <option value="en_camino">En camino</option>
-                  <option value="en_sucursal">En sucursal</option>
-                  <option value="entregado">Entregado</option>
-                  <option value="no_entregado">No entregado</option>
-                </select>
-              </div>
+            <h4 className="font-mono text-[10px] font-semibold text-amber-800 uppercase tracking-wider mb-2">Setear estado (verifica en el iframe de abajo)</h4>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { val: 'pendiente', text: 'Pendiente', color: 'bg-gray-100 hover:bg-gray-200 text-gray-700' },
+                { val: 'ingresado', text: 'Ingresado', color: 'bg-cyan-100 hover:bg-cyan-200 text-cyan-800' },
+                { val: 'en_camino', text: 'En camino', color: 'bg-blue-100 hover:bg-blue-200 text-blue-800' },
+                { val: 'en_sucursal', text: 'En sucursal', color: 'bg-indigo-100 hover:bg-indigo-200 text-indigo-800' },
+                { val: 'entregado', text: 'Entregado', color: 'bg-green-100 hover:bg-green-200 text-green-800' },
+                { val: 'no_entregado', text: 'No entregado', color: 'bg-red-100 hover:bg-red-200 text-red-800' },
+              ].map(btn => {
+                const statusMap: Record<string, { status: string; text: string }> = {
+                  pendiente: { status: 'pendiente', text: 'Pendiente de ingreso' },
+                  ingresado: { status: 'ingresado', text: 'Ingresado' },
+                  en_camino: { status: 'en_camino', text: 'En camino' },
+                  en_sucursal: { status: 'en_camino', text: 'En sucursal' },
+                  entregado: { status: 'entregado', text: 'Entregado' },
+                  no_entregado: { status: 'no_entregado', text: 'No entregado' },
+                };
+                const current = trackingData[selectedGuia];
+                const isActive = current && (current.status === statusMap[btn.val]?.status || (btn.val === 'en_sucursal' && current.statusText === 'En sucursal'));
+                return (
+                  <button
+                    key={btn.val}
+                    onClick={async () => {
+                      const s = statusMap[btn.val];
+                      const tracking = { guiaNumero: selectedGuia, status: s.status, statusText: s.text };
+                      setTrackingData(prev => ({ ...prev, [selectedGuia]: { ...tracking, lastChecked: new Date().toISOString() } }));
+                      await fetch('/api/tracking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tracking) });
+                    }}
+                    className={`px-3 py-1.5 font-mono text-[11px] font-semibold rounded-lg transition-colors ${isActive ? 'ring-2 ring-offset-1 ring-azul' : ''} ${btn.color}`}
+                  >
+                    {btn.text}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
