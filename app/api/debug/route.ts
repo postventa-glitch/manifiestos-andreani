@@ -1,29 +1,27 @@
-import { list } from '@vercel/blob';
-import { NextResponse } from 'next/server';
+export const runtime = 'edge';
 
-export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
+import { getKV } from '@/lib/bindings';
 
 export async function GET() {
   try {
-    // Search for manifiestos data blobs specifically
-    const searches = ['manifiestos-v3.json', 'mdata-', 'manifiestos-data.json', ''];
-    const results: Record<string, any[]> = {};
-
-    for (const prefix of searches) {
-      const { blobs } = await list({ prefix, limit: 20 });
-      results[prefix || 'ALL'] = blobs.map(b => ({
-        pathname: b.pathname,
-        size: b.size,
-        uploadedAt: b.uploadedAt,
-      }));
-    }
+    const kv = getKV();
+    const raw = await kv.get('manifiestos-data', 'text');
+    const dataSize = raw ? raw.length : 0;
+    const data = raw ? JSON.parse(raw) : null;
 
     return NextResponse.json({
-      searches: results,
-      storeVersion: 'v3-single-key',
+      status: 'ok',
+      kvConnected: true,
+      dataSize,
+      manifiestos: data?.manifiestos?.length || 0,
+      pending: data?.pendingFromYesterday?.length || 0,
+      auditLog: data?.auditLog?.length || 0,
+      history: data?.history?.length || 0,
+      version: data?._version || 0,
       timestamp: new Date().toISOString(),
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: e.message, kvConnected: false }, { status: 500 });
   }
 }
