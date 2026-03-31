@@ -40,27 +40,21 @@ export default function PublicPage() {
   const [finalizeResult, setFinalizeResult] = useState<string | null>(null);
   const pendingChecks = useRef<Set<string>>(new Set());
   const lastVersion = useRef<number>(0);
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchData = useCallback(async () => {
-    // Skip polling if there are pending check operations
+  // Sync with server — only updates if no pending local changes
+  const syncFromServer = useCallback(async () => {
     if (pendingChecks.current.size > 0) return;
     try {
       const res = await fetch('/api/manifiestos');
       const data = await res.json();
       const serverVersion = data._version || 0;
-      const hasServerData = (data.manifiestos?.length > 0 || data.pending?.length > 0);
-      const hasLocalData = lastVersion.current > 0;
-
-      // NEVER replace good data with empty — only accept if:
-      // 1. Server has actual data, OR
-      // 2. We don't have any data yet (first load)
-      if (hasServerData || !hasLocalData) {
-        if (serverVersion >= lastVersion.current || hasServerData) {
-          setManifiestos(data.manifiestos || []);
-          setPending(data.pending || []);
-          setAuditLog(data.auditLog || []);
-          lastVersion.current = Math.max(serverVersion, lastVersion.current);
-        }
+      // Only accept server data when we have no pending ops
+      if (pendingChecks.current.size === 0 && serverVersion >= lastVersion.current) {
+        setManifiestos(data.manifiestos || []);
+        setPending(data.pending || []);
+        setAuditLog(data.auditLog || []);
+        lastVersion.current = serverVersion;
       }
     } catch {
       // silent
@@ -69,17 +63,25 @@ export default function PublicPage() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 4000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  // Schedule a delayed sync (debounced) — waits for rapid clicks to finish
+  const scheduleSyncAfterWrite = useCallback(() => {
+    if (syncTimer.current) clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => {
+      syncFromServer();
+    }, 2000); // sync 2s after last write
+  }, [syncFromServer]);
 
-  const handleCheck = async (manifiestoId: string, guiaNumero: string, checked: boolean) => {
+  useEffect(() => {
+    syncFromServer();
+    const interval = setInterval(syncFromServer, 5000);
+    return () => { clearInterval(interval); if (syncTimer.current) clearTimeout(syncTimer.current); };
+  }, [syncFromServer]);
+
+  const handleCheck = (manifiestoId: string, guiaNumero: string, checked: boolean) => {
     const key = `${manifiestoId}-${guiaNumero}`;
     pendingChecks.current.add(key);
 
-    // Optimistic update
+    // INSTANT optimistic update — no await, no blocking
     const updateList = (list: Manifiesto[]) =>
       list.map(m =>
         m.id === manifiestoId
@@ -96,29 +98,26 @@ export default function PublicPage() {
 
     setManifiestos(prev => updateList(prev));
     setPending(prev => updateList(prev));
-
-    // Add optimistic audit entry
     setAuditLog(prev => [
       ...prev,
       { guiaNumero, manifiestoId, action: checked ? 'checked' : 'unchecked', timestamp: new Date().toISOString() },
     ]);
 
-    try {
-      const res = await fetch('/api/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ manifiestoId, guiaNumero, checked }),
+    // Fire-and-forget POST to server — don't await, don't block UI
+    fetch('/api/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manifiestoId, guiaNumero, checked }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        lastVersion.current = data._version || lastVersion.current;
+      })
+      .catch(() => {})
+      .finally(() => {
+        pendingChecks.current.delete(key);
+        scheduleSyncAfterWrite();
       });
-      const data = await res.json();
-      const serverVersion = data._version || 0;
-      // Always sync after our own write
-      setManifiestos(data.manifiestos || []);
-      setPending(data.pending || []);
-      setAuditLog(data.auditLog || []);
-      lastVersion.current = serverVersion;
-    } finally {
-      pendingChecks.current.delete(key);
-    }
   };
 
   const handleFinalize = async () => {
@@ -389,9 +388,11 @@ function ManifiestoCard({
             return (
               <tr
                 key={g.numero}
-                className={`border-b border-[#c8d6e8] transition-colors ${
+                onClick={() => onCheck(m.id, g.numero, !g.checked)}
+                className={`border-b border-[#c8d6e8] cursor-pointer select-none active:bg-blue-50 ${
                   g.checked ? 'guia-checked bg-[#eafaf1]' : wasUnchecked ? 'bg-red-50/30' : 'hover:bg-azul-claro'
                 }`}
+                style={{ transition: 'background-color 0.12s ease' }}
               >
                 <td className="py-2.5 px-3.5 text-center">
                   <span className={`guia-num-badge inline-block text-white font-mono text-[10px] font-semibold px-2 py-0.5 rounded tracking-wide ${g.checked ? 'bg-verde' : 'bg-azul'}`}>
@@ -428,7 +429,7 @@ function ManifiestoCard({
                       type="checkbox"
                       className="guia-checkbox"
                       checked={g.checked}
-                      onChange={e => onCheck(m.id, g.numero, e.target.checked)}
+                      onChange={e => { e.stopPropagation(); onCheck(m.id, g.numero, e.target.checked); }}
                     />
                   </div>
                 </td>
