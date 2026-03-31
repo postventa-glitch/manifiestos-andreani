@@ -610,48 +610,47 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
     }).catch(() => {});
   }, []);
 
-  // Scrape a single guia via proxy + DOMParser
-  const scrapeGuia = async (guia: string): Promise<GuiaTracking | null> => {
-    try {
-      const res = await fetch(`/api/tracking?proxy=1&guia=${guia}`);
-      const html = await res.text();
-      if (!html || html.length < 100) return null;
-      const parsed = parseAndreaniHTML(html, guia);
-      const tracking: GuiaTracking = { ...parsed, lastChecked: new Date().toISOString() };
-      // Save to server
-      await fetch('/api/tracking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(tracking),
-      });
-      return tracking;
-    } catch {
-      return null;
-    }
-  };
-
   const fetchTracking = async (guia: string) => {
     setLoadingGuia(guia);
-    const result = await scrapeGuia(guia);
-    if (result) {
-      setTrackingData(prev => ({ ...prev, [guia]: result }));
-    }
+    try {
+      const res = await fetch(`/api/tracking?guia=${guia}`);
+      const data = await res.json();
+      if (data.guiaNumero || data.status) {
+        const t: GuiaTracking = {
+          guiaNumero: guia,
+          status: data.status,
+          statusText: data.statusText,
+          lastChecked: data.lastChecked || new Date().toISOString(),
+          empresa: data.empresa,
+          timeline: data.timeline,
+        };
+        setTrackingData(prev => ({ ...prev, [guia]: t }));
+      }
+    } catch {}
     setLoadingGuia('');
   };
 
   const scanAll = async () => {
     setScanning(true);
-    const nums = allGuias.map(g => g.numero);
-    for (let i = 0; i < nums.length; i++) {
-      setScanProgress(`${i + 1}/${nums.length}`);
-      const result = await scrapeGuia(nums[i]);
-      if (result) {
-        setTrackingData(prev => ({ ...prev, [nums[i]]: result }));
+    setScanProgress('Consultando envia.com...');
+    try {
+      const nums = allGuias.map(g => g.numero);
+      const res = await fetch('/api/tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guias: nums }),
+      });
+      const data = await res.json();
+      if (data.results) {
+        setTrackingData(prev => {
+          const next = { ...prev };
+          data.results.forEach((t: GuiaTracking) => { next[t.guiaNumero] = t; });
+          return next;
+        });
+        setScanProgress(`${data.scanned}/${data.total} consultadas`);
       }
-      // Small delay to avoid rate limiting
-      if (i < nums.length - 1) await new Promise(r => setTimeout(r, 500));
-    }
-    setScanProgress('');
+    } catch {}
+    setTimeout(() => setScanProgress(''), 2000);
     setScanning(false);
   };
 
@@ -724,19 +723,15 @@ function TrackingTab({ allManifiestos }: { allManifiestos: Manifiesto[] }) {
             const getTimelineDate = (label: string) => tl.find(s => s.label === label)?.date || null;
             const isTimelineDone = (label: string) => tl.find(s => s.label === label)?.done || false;
 
-            // Determine step completion from stored status
-            const st = t?.status || 'desconocido';
-            const stReached = (target: string[]) => target.includes(st);
-            const ingresadoDone = stReached(['ingresado', 'en_camino', 'en_distribucion', 'entregado', 'no_entregado']);
-            const enCaminoDone = stReached(['en_camino', 'en_distribucion', 'entregado', 'no_entregado']);
-            const entregadoDone = st === 'entregado';
+            const tl = t?.timeline || [];
+            const tlStep = (label: string) => tl.find(s => s.label === label);
 
             const steps = [
               { label: 'Carga manifiesto', sub: new Date(g.uploadedAt).toLocaleString('es-AR'), done: true, dotColor: 'bg-green-500', bgColor: 'bg-green-50 border-green-200' },
               { label: 'Empaquetado', sub: g.checkedAt ? new Date(g.checkedAt).toLocaleString('es-AR') : 'Pendiente', done: g.checked, dotColor: g.checked ? 'bg-green-500' : 'bg-gray-300', bgColor: g.checked ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'Ingresado', sub: getTimelineDate('Ingresado') || (ingresadoDone ? 'Si' : 'Pendiente'), done: ingresadoDone, dotColor: ingresadoDone ? 'bg-cyan-500' : 'bg-gray-300', bgColor: ingresadoDone ? 'bg-cyan-50 border-cyan-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'En camino', sub: getTimelineDate('En camino') || (enCaminoDone ? t?.statusText || 'Si' : 'Pendiente'), done: enCaminoDone, dotColor: enCaminoDone ? 'bg-blue-500' : 'bg-gray-300', bgColor: enCaminoDone ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200' },
-              { label: 'Entregado', sub: getTimelineDate('Entregado') || (entregadoDone ? 'Confirmado' : st === 'no_entregado' ? 'No entregado' : 'Pendiente'), done: entregadoDone, dotColor: entregadoDone ? 'bg-green-500' : st === 'no_entregado' ? 'bg-red-500' : 'bg-gray-300', bgColor: entregadoDone ? 'bg-green-50 border-green-200' : st === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Ingresado', sub: tlStep('Ingresado')?.date || (tlStep('Ingresado')?.done ? 'Si' : 'Pendiente'), done: !!tlStep('Ingresado')?.done, dotColor: tlStep('Ingresado')?.done ? 'bg-cyan-500' : 'bg-gray-300', bgColor: tlStep('Ingresado')?.done ? 'bg-cyan-50 border-cyan-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'En camino', sub: tlStep('En camino')?.date || (tlStep('En camino')?.done ? 'Si' : 'Pendiente'), done: !!tlStep('En camino')?.done, dotColor: tlStep('En camino')?.done ? 'bg-blue-500' : 'bg-gray-300', bgColor: tlStep('En camino')?.done ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200' },
+              { label: 'Entregado', sub: tlStep('Entregado')?.date || (tlStep('Entregado')?.done ? 'Confirmado' : t?.status === 'no_entregado' ? 'No entregado' : 'Pendiente'), done: !!tlStep('Entregado')?.done, dotColor: tlStep('Entregado')?.done ? 'bg-green-500' : t?.status === 'no_entregado' ? 'bg-red-500' : 'bg-gray-300', bgColor: tlStep('Entregado')?.done ? 'bg-green-50 border-green-200' : t?.status === 'no_entregado' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200' },
             ];
 
             return (
