@@ -66,15 +66,23 @@ body {
 
 /* Row transitions */
 tr.guia-checked {
-  transition: background-color 0.15s ease;
+  transition: background-color 0.12s ease;
 }
 
 .guia-checked td {
   color: #5b8a6e !important;
-  transition: color 0.15s ease;
+  transition: color 0.12s ease;
 }
 
 .guia-checked .guia-num-badge {
   background: #0f9d58 !important;
-  transition: background 0.15s ease;
+  transition: background 0.12s ease;
+}
+
+/* Print styles */
+@media print {
+  .no-print { display: none !important; }
+  body { margin: 0; padding: 0; }
+  .print-page { box-shadow: none !important; margin: 0 !important; }
+  @page { size: A4; margin: 0; }
 }
