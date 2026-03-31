@@ -1,18 +1,20 @@
 {
   "name": "manifiestos-andreani",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
+    "build": "npx @cloudflare/next-on-pages",
+    "start": "next start",
+    "preview": "npx wrangler pages dev .vercel/output/static",
+    "deploy": "npx wrangler pages deploy .vercel/output/static"
   },
   "dependencies": {
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "pdf-parse": "^1.1.1",
-    "@vercel/blob": "^0.23.0"
+    "@cloudflare/next-on-pages": "^1.13.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
@@ -21,6 +23,7 @@
     "@types/react-dom": "^18.3.0",
     "tailwindcss": "^3.4.0",
     "postcss": "^8.4.0",
-    "autoprefixer": "^10.4.0"
+    "autoprefixer": "^10.4.0",
+    "wrangler": "^3.60.0"
   }
 }

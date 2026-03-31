@@ -1,3 +1,5 @@
+export const runtime = 'edge';
+
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
@@ -40,7 +42,6 @@ export async function GET(request: NextRequest) {
     });
     if (pageRes.ok) {
       const html = await pageRes.text();
-      // Try to extract tracking data from the page
       const jsonMatch = html.match(/__NEXT_DATA__.*?<\/script>/s);
       if (jsonMatch) {
         try {
@@ -66,7 +67,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     guia,
     tracking: null,
-    trackingUrl: `https://www.andreani.com/envio/${guia}`,
+    trackingUrl: `https://www.andreani.com/#!/informacionEnvio/${guia}`,
     altUrls: [
       `https://www.andreani.com/#!/informacionEnvio/${guia}`,
       `https://www.andreani.com/envio/${guia}`,
