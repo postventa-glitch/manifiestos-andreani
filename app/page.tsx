@@ -52,8 +52,15 @@ export default function PublicPage() {
   // Sequential queue for server writes
   const checkQueue = useRef<Array<{ manifiestoId: string; guiaNumero: string; checked: boolean }>>([]);
   const isProcessing = useRef(false);
-  // Debounce per guia to prevent double-clicks
+  // Cooldown: block all syncs for N ms after last local change
+  const lastLocalChange = useRef<number>(0);
+  const SYNC_COOLDOWN = 4000; // 4s cooldown after last click before allowing server sync
+  // Debounce per guia
   const lastClickTime = useRef<Record<string, number>>({});
+
+  const isBusy = () => {
+    return checkQueue.current.length > 0 || isProcessing.current || (Date.now() - lastLocalChange.current < SYNC_COOLDOWN);
+  };
 
   const processQueue = useCallback(async () => {
     if (isProcessing.current || checkQueue.current.length === 0) return;
@@ -73,17 +80,20 @@ export default function PublicPage() {
     }
 
     isProcessing.current = false;
+    // Schedule sync well after cooldown expires
     if (syncTimer.current) clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(syncFromServer, 1500);
+    syncTimer.current = setTimeout(syncFromServer, SYNC_COOLDOWN + 500);
   }, []);
 
   const syncFromServer = useCallback(async () => {
-    if (checkQueue.current.length > 0 || isProcessing.current) return;
+    // STRICT guard: never sync if user has been clicking recently
+    if (isBusy()) return;
     try {
       const res = await fetch('/api/manifiestos');
       const data = await res.json();
       const serverVersion = data._version || 0;
-      if (checkQueue.current.length === 0 && !isProcessing.current && serverVersion >= lastVersion.current) {
+      // Double-check after await — user may have clicked during fetch
+      if (!isBusy() && serverVersion >= lastVersion.current) {
         setManifiestos(data.manifiestos || []);
         setPending(data.pending || []);
         setAuditLog(data.auditLog || []);
@@ -97,16 +107,17 @@ export default function PublicPage() {
 
   useEffect(() => {
     syncFromServer();
-    const interval = setInterval(syncFromServer, 5000);
+    const interval = setInterval(syncFromServer, 6000);
     return () => { clearInterval(interval); if (syncTimer.current) clearTimeout(syncTimer.current); };
   }, [syncFromServer]);
 
   const handleCheck = (manifiestoId: string, guiaNumero: string, checked: boolean) => {
-    // Debounce: ignore clicks within 300ms on same guia
+    // Debounce: ignore clicks within 400ms on same guia
     const key = `${manifiestoId}-${guiaNumero}`;
     const now = Date.now();
-    if (lastClickTime.current[key] && now - lastClickTime.current[key] < 300) return;
+    if (lastClickTime.current[key] && now - lastClickTime.current[key] < 400) return;
     lastClickTime.current[key] = now;
+    lastLocalChange.current = now; // Mark cooldown
 
     // Instant optimistic update
     const updateList = (list: Manifiesto[]) =>
