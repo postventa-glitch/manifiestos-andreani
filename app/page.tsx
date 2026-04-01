@@ -39,10 +39,13 @@ const EMPRESA = {
   telefono: '+5492804029031',
 };
 
+type ZonaFilter = 'all' | 'puerto_madryn' | 'buenos_aires';
+
 export default function PublicPage() {
   const [manifiestos, setManifiestos] = useState<Manifiesto[]>([]);
   const [pending, setPending] = useState<Manifiesto[]>([]);
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [zonaFilter, setZonaFilter] = useState<ZonaFilter>('all');
   const [loading, setLoading] = useState(true);
   const [showAudit, setShowAudit] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
@@ -204,8 +207,21 @@ export default function PublicPage() {
   };
 
   const allManifiestos = [...pending, ...manifiestos];
-  const totalGuias = allManifiestos.reduce((s, m) => s + m.guias.length, 0);
-  const checkedGuias = allManifiestos.reduce((s, m) => s + m.guias.filter(g => g.checked).length, 0);
+
+  // Zona filter
+  const filterByZona = (list: Manifiesto[]) =>
+    zonaFilter === 'all' ? list : list.filter(m => (m.zona || 'puerto_madryn') === zonaFilter);
+
+  const filteredManifiestos = filterByZona(manifiestos);
+  const filteredPending = filterByZona(pending);
+  const filteredAll = [...filteredPending, ...filteredManifiestos];
+
+  // Counts for filter buttons
+  const pmCount = allManifiestos.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn').reduce((s, m) => s + m.guias.length, 0);
+  const baCount = allManifiestos.filter(m => m.zona === 'buenos_aires').reduce((s, m) => s + m.guias.length, 0);
+
+  const totalGuias = filteredAll.reduce((s, m) => s + m.guias.length, 0);
+  const checkedGuias = filteredAll.reduce((s, m) => s + m.guias.filter(g => g.checked).length, 0);
   const pct = totalGuias > 0 ? (checkedGuias / totalGuias) * 100 : 0;
 
   const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -251,6 +267,35 @@ export default function PublicPage() {
         </div>
       </div>
 
+      {/* Zona Filter Buttons */}
+      {(pmCount > 0 || baCount > 0) && (
+        <div className="max-w-[860px] mx-auto bg-[#1a3366] flex items-center gap-2 px-7 py-2">
+          <span className="font-mono text-[10px] text-white/40 uppercase tracking-wider mr-2">Zona:</span>
+          <button
+            onClick={() => setZonaFilter('all')}
+            className={`px-3 py-1 rounded-full font-mono text-[10px] font-semibold transition-colors ${zonaFilter === 'all' ? 'bg-white text-azul' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}
+          >
+            Todas ({allManifiestos.reduce((s, m) => s + m.guias.length, 0)})
+          </button>
+          {pmCount > 0 && (
+            <button
+              onClick={() => setZonaFilter('puerto_madryn')}
+              className={`px-3 py-1 rounded-full font-mono text-[10px] font-semibold transition-colors ${zonaFilter === 'puerto_madryn' ? 'bg-blue-500 text-white' : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'}`}
+            >
+              Puerto Madryn ({pmCount})
+            </button>
+          )}
+          {baCount > 0 && (
+            <button
+              onClick={() => setZonaFilter('buenos_aires')}
+              className={`px-3 py-1 rounded-full font-mono text-[10px] font-semibold transition-colors ${zonaFilter === 'buenos_aires' ? 'bg-emerald-500 text-white' : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'}`}
+            >
+              Buenos Aires ({baCount})
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Progress Bar */}
       <div className="max-w-[860px] mx-auto bg-azul-medio flex items-center gap-3.5 px-7 py-2.5">
         <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
@@ -281,10 +326,10 @@ export default function PublicPage() {
       {/* Container */}
       <div className="max-w-[860px] mx-auto bg-white rounded-b-xl overflow-hidden shadow-[0_8px_40px_rgba(26,46,90,0.12)]">
         {(() => {
-          const pmPending = pending.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
-          const baPending = pending.filter(m => m.zona === 'buenos_aires');
-          const pmToday = manifiestos.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
-          const baToday = manifiestos.filter(m => m.zona === 'buenos_aires');
+          const pmPending = filteredPending.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
+          const baPending = filteredPending.filter(m => m.zona === 'buenos_aires');
+          const pmToday = filteredManifiestos.filter(m => (m.zona || 'puerto_madryn') === 'puerto_madryn');
+          const baToday = filteredManifiestos.filter(m => m.zona === 'buenos_aires');
           const pmAll = [...pmPending, ...pmToday];
           const baAll = [...baPending, ...baToday];
 
